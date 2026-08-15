@@ -18,6 +18,61 @@
 import * as THREE from './vendor/three.module.js';
 
 const TEAM_COLOR = [0x7fa8e3, 0xe0b062];
+const TEX = './textures/';
+
+/**
+ * Every texture the scene uses, loaded once.
+ *
+ * <p>Colour maps are tagged sRGB and data maps are not, which is not a detail:
+ * a normal map read as sRGB has its slopes bent by the transfer curve and the
+ * surface lights wrongly in a way that is easy to see and hard to name.
+ *
+ * <p>Nothing here blocks. Three fills each texture in when it arrives, so a
+ * missing or slow file costs the look of a surface and never the game.
+ */
+function loadTextures() {
+  const loader = new THREE.TextureLoader();
+
+  const colour = (file, repeat) => {
+    const tex = loader.load(TEX + file);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    if (repeat) {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(repeat[0], repeat[1]);
+    }
+    return tex;
+  };
+  const data = (file, repeat) => {
+    const tex = loader.load(TEX + file);
+    if (repeat) {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(repeat[0], repeat[1]);
+    }
+    return tex;
+  };
+
+  // The floor tile is a metre or two across in world units, so the arena wants
+  // it repeated rather than stretched over 120 units of plating.
+  const floorRepeat = [8, 5];
+
+  return {
+    floorAlbedo: colour('floor-albedo.jpg', floorRepeat),
+    floorNormal: data('floor-normal.jpg', floorRepeat),
+    floorRough: data('floor-roughness.jpg', floorRepeat),
+    fragment: colour('fragment-albedo.jpg', [2, 1]),
+    norse: colour('player-norse-albedo.jpg'),
+    greek: colour('player-greek-albedo.jpg'),
+    star: colour('star-equirect.jpg'),
+    glow: colour('particle-glow.png'),
+    shockwave: colour('particle-shockwave.png'),
+    backdrop: (() => {
+      const tex = loader.load(TEX + 'backdrop-equirect.jpg');
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    })(),
+  };
+}
 
 export class Renderer3D {
   constructor(canvas, cfg) {
@@ -29,9 +84,14 @@ export class Renderer3D {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    this.tex = loadTextures();
+
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x05070d);
-    this.scene.fog = new THREE.Fog(0x05070d, 90, 240);
+    // The dead system this arena hangs inside. Dark enough that it never
+    // competes with the star, which is the only thing allowed to be bright.
+    this.scene.background = this.tex.backdrop;
+    this.scene.backgroundIntensity = 0.5;
+    this.scene.fog = new THREE.Fog(0x05070d, 110, 280);
 
     // Looking down the arena at an angle rather than straight down. Straight
     // down is readable and completely flat; this keeps the read while letting
@@ -55,19 +115,24 @@ export class Renderer3D {
      * dead sky rather than as a lamp. Both are far below the star, which still
      * dominates every surface it reaches and still throws every shadow.
      */
-    this.scene.add(new THREE.AmbientLight(0x2a3752, 0.9));
+    this.scene.add(new THREE.AmbientLight(0x2a3752, 1.4));
 
-    const sky = new THREE.DirectionalLight(0x8fa6d8, 0.35);
+    const sky = new THREE.DirectionalLight(0x8fa6d8, 0.5);
     sky.position.set(this.cfg.w * 0.5, this.cfg.h * 0.2, 90);
     this.scene.add(sky);
 
-    this.starLight = new THREE.PointLight(0xffc46a, 900, 260, 2);
+    this.starLight = new THREE.PointLight(0xffc46a, 2200, 300, 1.7);
     this.starLight.castShadow = true;
     // 512 rather than 1024: the difference is invisible at this scale and it
     // halves the cost of a frame on a machine drawing this in software.
     this.starLight.shadow.mapSize.set(512, 512);
     this.starLight.shadow.camera.near = 1;
     this.starLight.shadow.camera.far = 220;
+    // Without these the floor shadows itself: a point light a couple of units
+    // above a large plane produces acne across the whole surface, which read as
+    // a hard dark rectangle sitting next to the star.
+    this.starLight.shadow.bias = -0.0015;
+    this.starLight.shadow.normalBias = 0.35;
     this.scene.add(this.starLight);
 
     this.bodies = new Map();   // id -> THREE.Mesh
@@ -75,6 +140,19 @@ export class Renderer3D {
     this.flashRings = [];
 
     this.sphere = new THREE.SphereGeometry(1, 32, 24);
+
+    // A soft halo that always faces the camera, so the star reads as something
+    // burning rather than as a lit ball. Cheaper and steadier than bloom.
+    this.halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.tex.glow,
+      color: 0xffc46a,
+      transparent: true,
+      opacity: 0.55,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }));
+    this.halo.scale.setScalar(26);
+    this.scene.add(this.halo);
   }
 
   /**
@@ -102,7 +180,21 @@ export class Renderer3D {
     // stand on and the fog has something to fade into.
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(w + 40, h + 40),
-      new THREE.MeshStandardMaterial({ color: 0x0b1120, roughness: 0.95, metalness: 0.05 }),
+      new THREE.MeshStandardMaterial({
+        map: this.tex.floorAlbedo,
+        normalMap: this.tex.floorNormal,
+        roughnessMap: this.tex.floorRough,
+        // The normal map is derived from the albedo's luminance rather than
+        // authored, so it is right about seams and rivets and only roughly
+        // right about everything else. Turned down accordingly.
+        normalScale: new THREE.Vector2(0.6, 0.6),
+        // The albedo is graded very dark on purpose, so it is brightened here
+        // rather than in the file: the texture stays the source of truth and
+        // the renderer decides how lit the room is.
+        color: 0xcdd8ec,
+        roughness: 1,
+        metalness: 0.1,
+      }),
     );
     floor.position.set(w / 2, h / 2, -0.01);
     floor.receiveShadow = true;
@@ -164,18 +256,26 @@ export class Renderer3D {
       // The star is emissive, and the light itself is a separate object that
       // follows it. An emissive material lights nothing on its own.
       material = new THREE.MeshStandardMaterial({
-        color: 0xffe9b0, emissive: 0xffd98a, emissiveIntensity: 1.4, roughness: 0.4,
+        map: this.tex.star,
+        emissiveMap: this.tex.star,
+        color: 0xffe9b0, emissive: 0xffffff, emissiveIntensity: 1.4, roughness: 0.4,
       });
     } else if (b.fixed) {
       // A trace of self-illumination on the fragments, so an unlit one on the
       // far side is still an obstacle you can see rather than one you discover.
       material = new THREE.MeshStandardMaterial({
-        color: 0x1b2438, roughness: 0.9, metalness: 0.15,
+        map: this.tex.fragment,
+        color: 0x9fb0c8, roughness: 0.9, metalness: 0.15,
         emissive: 0x121a2b, emissiveIntensity: 1,
       });
     } else {
+      // Tinted toward the team colour on top of the material, so a Norse body
+      // and a Greek body are told apart by hue at a glance and by surface up
+      // close.
       material = new THREE.MeshStandardMaterial({
-        color: TEAM_COLOR[b.team] ?? 0x8a8f98, roughness: 0.45, metalness: 0.25,
+        map: b.team === 0 ? this.tex.norse : this.tex.greek,
+        color: TEAM_COLOR[b.team] ?? 0x8a8f98,
+        roughness: 0.45, metalness: 0.25,
       });
     }
 
@@ -189,16 +289,20 @@ export class Renderer3D {
     return mesh;
   }
 
-  /** A ring on the floor where something was hit. */
+  /** A shockwave on the floor where something was hit. */
   addFlash(x, y, strength) {
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.6, 0.95, 32),
+      new THREE.PlaneGeometry(4, 4),
       new THREE.MeshBasicMaterial({
-        color: 0xffe9b0, transparent: true, opacity: 0.7 * strength,
-        side: THREE.DoubleSide,
+        map: this.tex.shockwave,
+        color: 0xffe9b0,
+        transparent: true,
+        opacity: 0.75 * strength,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
       }),
     );
-    ring.position.set(x, this.mapY(y), 0.05);
+    ring.position.set(x, this.mapY(y), 0.06);
     this.scene.add(ring);
     this.flashRings.push({ ring, born: performance.now(), strength });
   }
@@ -221,6 +325,9 @@ export class Renderer3D {
         this.starLight.position.set(b.x, this.mapY(b.y), b.r * 2.2);
         const pulse = 1 + Math.sin(performance.now() / 620) * 0.07;
         mesh.material.emissiveIntensity = 1.4 * pulse;
+        mesh.rotation.z += 0.0015;   // the surface turns, slowly
+        this.halo.position.set(b.x, this.mapY(b.y), b.r);
+        this.halo.scale.setScalar(26 * pulse);
       } else if (b.id === myId) {
         mesh.material.emissive = new THREE.Color(0x7fe3c0);
         mesh.material.emissiveIntensity = 0.35;

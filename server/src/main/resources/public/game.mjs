@@ -369,7 +369,7 @@ function renderOverlay() {
 
   if (lobbyScreen === 'start') {
     panel.innerHTML =
-      `<h1>ORRERY</h1>` +
+      `<img class="wordmark" src="./wordmark.png" alt="ORRERY">` +
       `<div class="tag">feed the star to the serpent</div>` +
       `<button id="startbtn">START</button>` +
       `<div class="hint">click, or press ENTER or SPACE</div>`;

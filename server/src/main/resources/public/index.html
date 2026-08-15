@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Orrery</title>
+<link rel="icon" type="image/png" href="./favicon.png">
 <style>
   html, body { margin: 0; height: 100%; background: #05070d; color: #cfd6e4;
                font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; }
@@ -31,6 +32,10 @@
   #panel { text-align: center; }
   #panel h1 { margin: 0 0 6px; font-size: 46px; letter-spacing: 10px; font-weight: 300;
               color: #ffe9b0; text-shadow: 0 0 28px rgba(255,196,90,.35); }
+  /* The drawn wordmark replaces the CSS one on the title screen only. The side
+     picker keeps type, because a picture of the word "PICK A SIDE" would be a
+     picture of an instruction. */
+  #panel img.wordmark { width: min(520px, 70vw); display: block; margin: 0 auto 4px; }
   #panel .tag { color: #7c8798; margin-bottom: 30px; letter-spacing: 1px; }
   button { font: inherit; letter-spacing: 2px; color: #cfd6e4; cursor: pointer;
            background: transparent; border: 1px solid #2a3752; border-radius: 3px;

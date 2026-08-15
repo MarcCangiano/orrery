@@ -83,6 +83,9 @@ Two reasons, in order:
       Teams are chosen rather than assigned by join order
 - [x] 3D renderer (Three.js, vendored). The simulation stays 2D and verified;
       only the picture is dimensional. ?flat=1 keeps the canvas renderer
+- [x] Artwork: 18 textures generated and wired in. See docs/ART-BRIEF.md for
+      what was asked for and docs/ART-DELIVERY.md for what arrived and what
+      changed afterwards
 - [ ] Sound
 - [x] CI: GitHub Actions runs the tests, the drift check and the prediction
       check on every push. The browser check skips cleanly without Chrome
