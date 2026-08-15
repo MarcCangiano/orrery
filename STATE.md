@@ -66,10 +66,14 @@ Two reasons, in order:
 - [x] Client prediction and reconciliation (measured at 0.000000 units of error)
 - [x] Debug tooling: lag simulator (L), server ghost (G), prediction toggle (P)
 - [x] Interpolation for other players, 80ms behind
-- [ ] Tether
-- [ ] The star, the jaws, scoring, match flow
+- [x] Body-to-body collisions, immovable ring fragments
+- [x] The star, the jaws, teams, scoring, post-goal reset
+- [x] Shove with equal-and-opposite recoil, on a cooldown
+- [x] Tether: rope constraint, anchors are fragments and the star
 - [ ] Interest management
-- [ ] Lag-compensated shove
+- [ ] Lag compensation for the shove
+- [ ] Match flow: a score limit and an end
+- [ ] Sound
 - [ ] Deploy: server on a box, client on Pages
 
 ## How the clock works, because it is the non-obvious part
@@ -93,10 +97,16 @@ Two rules fell out of measuring, both in `predictor.mjs`:
 
 ## Known issues
 
-- `Main` paces the loop with `Thread.sleep(1)`, and macOS sleep granularity puts
-  the worst observed gap at 25ms against a 16.67ms budget. Harmless while the
-  loop does nothing, wrong once it simulates. The fix is to sleep until just
-  before the deadline and spin the last fraction of a millisecond. Not now.
+- Nothing measured and outstanding. The sleep-granularity problem from the first
+  commit is fixed: the loop now sleeps to just before the deadline and spins the
+  last fraction, and the server holds **60.00 ticks/s with zero dropped**.
+- Other players are mirrored into the client's prediction with no input at all,
+  which is wrong the moment they thrust. It only reaches the screen through
+  contact with you, and the correction arrives within a snapshot. Revisit if
+  player-to-player collisions start feeling loose in real play.
+- Late inputs sit at ~1.6% of snapshots on localhost. Each one is a small snap.
+  Worth re-measuring over a real network before deciding whether SAFETY_TICKS
+  needs to be adaptive.
 
 ## How to run it
 
@@ -115,14 +125,15 @@ the unit tests never will.
 
 ## Next action
 
-Body-to-body collisions. This is the first thing that makes prediction hard for
-real: right now nothing you predict depends on anyone else, so a replay only
-ever involves your own inputs. Once two bodies can hit each other, the client is
-predicting something it does not have complete information about, and the
-correction becomes visible.
+**Play it with two humans.** Everything above is verified by machines and none
+of it says whether the game is any good. The specific questions: does the star
+feel heavy enough to need a teammate, is the tether readable when someone else
+is swinging, and is the shove cooldown too long to defend with.
 
-Expect the honest answer to be that you do NOT predict collisions with other
-players, only with walls and the star, and let the server settle player contact.
-Measure it before deciding.
+Tuning that follows from that session, not before it: THRUST, STAR_MASS,
+SHOVE_IMPULSE, SHOVE_COOLDOWN, TETHER_MAX_LENGTH. They are all constants in
+Arena.java and World.java and they are all sent to the client on welcome, so
+changing one is a server restart and nothing else.
 
-After that, in rough order: the star, the jaws, scoring, then the tether.
+Then, in rough order: a score limit and a match end, sound, and interest
+management once there are enough bodies for it to matter.

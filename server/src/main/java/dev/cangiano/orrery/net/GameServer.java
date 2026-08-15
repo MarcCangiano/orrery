@@ -181,6 +181,7 @@ public final class GameServer {
     private void simulationLoop() {
         FixedTickLoop loop = new FixedTickLoop(TICK_HZ, 5, TimeSource.SYSTEM);
         long lastReport = System.nanoTime();
+        long ticksAtLastReport = 0;
 
         while (running) {
             loop.advance((tick, dt) -> {
@@ -261,18 +262,30 @@ public final class GameServer {
                 }
             });
 
-            if (System.nanoTime() - lastReport > 10_000_000_000L) {
-                lastReport = System.nanoTime();
-                if (loop.droppedTicks() > 0) {
-                    System.out.printf("WARNING dropped %d ticks%n", loop.droppedTicks());
-                }
+            long now = System.nanoTime();
+            if (now - lastReport > 30_000_000_000L) {
+                long ticks = loop.tickNumber();
+                double seconds = (now - lastReport) / 1e9;
+                System.out.printf("tick rate %.2f/s  dropped %d  players %d%n",
+                        (ticks - ticksAtLastReport) / seconds, loop.droppedTicks(),
+                        players.size());
+                ticksAtLastReport = ticks;
+                lastReport = now;
             }
 
-            try {
-                Thread.sleep(1);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
+            // Sleep most of the way to the deadline, then spin the rest.
+            // Sleeping the whole way overshoots by up to 15ms on macOS; spinning
+            // the whole way burns a core for nothing.
+            long until = loop.nanosUntilNextTick();
+            if (until > 2_000_000L) {
+                try {
+                    Thread.sleep((until - 1_000_000L) / 1_000_000L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            } else if (until > 0) {
+                Thread.onSpinWait();
             }
         }
     }

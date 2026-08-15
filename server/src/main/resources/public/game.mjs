@@ -287,13 +287,17 @@ function frame() {
  * a circle: a hot core inside a falloff that reaches most of the arena.
  */
 function drawStar(b) {
-  const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 9);
-  glow.addColorStop(0, 'rgba(255,236,190,0.55)');
-  glow.addColorStop(0.25, 'rgba(255,196,90,0.18)');
+  // Reach and strength both pulled back from the first attempt, which lit the
+  // whole top of the screen and made the HUD hard to read. The star should say
+  // "here I am" from across the arena without being the brightest thing on it.
+  const reach = b.r * 6;
+  const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, reach);
+  glow.addColorStop(0, 'rgba(255,236,190,0.38)');
+  glow.addColorStop(0.3, 'rgba(255,196,90,0.10)');
   glow.addColorStop(1, 'rgba(255,170,40,0)');
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(b.x, b.y, b.r * 9, 0, Math.PI * 2);
+  ctx.arc(b.x, b.y, reach, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.beginPath();

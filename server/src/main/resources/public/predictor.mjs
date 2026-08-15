@@ -119,20 +119,25 @@ export class Predictor {
    * the error never reaches the screen except through contact with you.
    */
   syncWorld(bodies) {
-    const seen = new Set();
+    // Rebuilt in the SERVER'S order, every time, rather than updated in place.
+    //
+    // Collisions resolve as a single pass over the list, so when three bodies
+    // touch at once the order decides the answer. The client used to start its
+    // list with its own body and append everyone else as they appeared, while
+    // the server's list begins with the star. Two bodies alone are symmetric
+    // and agreed; a player wedged between the star and a ring fragment did not,
+    // and it showed up as a 0.23 unit spike exactly on the ticks with contact.
+    const rebuilt = [];
     for (const s of bodies) {
-      seen.add(s.id);
       let b = this.world.byId(s.id);
-      if (!b) {
-        b = this.world.add(new Body(s.id, s.x, s.y, s.r, s.m ?? 1));
-        if (s.id === this.id) this.body = b;
-      }
+      if (!b) b = new Body(s.id, s.x, s.y, s.r, s.m ?? 1);
       b.x = s.x; b.y = s.y; b.vx = s.vx; b.vy = s.vy;
       b.radius = s.r;
       if (s.m) b.mass = s.m;
+      b.immovable = !!s.fixed;
+      rebuilt.push(b);
     }
-    // Anything the server no longer has, we no longer have.
-    this.world.bodies = this.world.bodies.filter(b => seen.has(b.id));
+    this.world.bodies = rebuilt;
     const mine = this.world.byId(this.id);
     if (mine) this.body = mine;
   }

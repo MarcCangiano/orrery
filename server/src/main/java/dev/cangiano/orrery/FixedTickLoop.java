@@ -108,6 +108,19 @@ public final class FixedTickLoop {
         return droppedTicks;
     }
 
+    /**
+     * Nanoseconds until the next tick is due, as of the last {@link #advance}.
+     *
+     * <p>Exists so a caller can sleep until just before the deadline instead of
+     * sleeping a millisecond at a time and hoping. On macOS a 1ms sleep is
+     * frequently 5 to 15ms, which was showing up as a worst tick gap of 25ms
+     * against a 16.67ms budget.
+     */
+    public long nanosUntilNextTick() {
+        long remaining = tickNanos - accumulator;
+        return Math.max(remaining, 0);
+    }
+
     /** Seconds per tick. Constant, by design. */
     public double dt() {
         return dt;
