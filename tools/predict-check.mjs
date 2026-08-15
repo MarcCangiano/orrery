@@ -37,6 +37,10 @@ let snapshots = 0;
 let measured = 0;
 let sumError = 0;
 let worstError = 0;
+// A run that never touches the star measures prediction against nothing more
+// interesting than a straight line. Count the contacts and fail without them.
+let starContacts = 0;
+let touchingStar = false;
 
 const ws = new WebSocket(url);
 ws.addEventListener('error', () => {
@@ -54,6 +58,7 @@ ws.addEventListener('message', ev => {
       w: m.w, h: m.h, thrust: m.thrust, maxSpeed: m.maxSpeed,
       restitution: m.restitution, dt: 1 / m.hz, dtMs: 1000 / m.hz,
     });
+    cfg.bodyRestitution = m.bodyRestitution;
     predictor = new Predictor(cfg, myId, { x: cfg.w / 2, y: cfg.h / 2, r: 1.6 });
     return;
   }
@@ -79,7 +84,15 @@ ws.addEventListener('message', ev => {
   } else if (target > predTick) predTick += 1;
   else if (target < predTick) predTick -= 1;
 
-  predictor.reconcile(m.tick, truth);
+  const star = m.bodies.find(b => b.id === -1);
+  if (star) {
+    const gap = Math.hypot(star.x - truth.x, star.y - truth.y);
+    const touching = gap <= star.r + truth.r + 0.25;
+    if (touching && !touchingStar) starContacts++;
+    touchingStar = touching;
+  }
+
+  predictor.reconcile(m.tick, m.bodies, m.freeze);
 
   // The first stretch is the clock settling in. Measuring then would report the
   // resync as a prediction failure, which it is not.
@@ -92,13 +105,16 @@ ws.addEventListener('message', ev => {
   }
 });
 
-// Direction changes and wall contact, since a body drifting in a straight line
-// would predict perfectly even with the logic broken.
-function intent(t) {
-  const phase = Math.floor(t / 700) % 4;
-  if (phase === 0) return { ax: 1, ay: 0 };
-  if (phase === 1) return { ax: 0, ay: -1 };
-  if (phase === 2) return { ax: -1, ay: 0.5 };
+// Drives at the star, hits it, backs off and hits it again. A body drifting in
+// a straight line would predict perfectly even with the logic broken, and a
+// collision is the case where the client is predicting something it does not
+// fully control.
+function intent(t, fromRight) {
+  const toward = fromRight ? -1 : 1;
+  const phase = Math.floor(t / 900) % 4;
+  if (phase === 0) return { ax: toward, ay: 0 };
+  if (phase === 1) return { ax: -toward, ay: -0.3 };
+  if (phase === 2) return { ax: toward, ay: 0.3 };
   return { ax: 0, ay: 0 };
 }
 
@@ -106,7 +122,7 @@ const started = Date.now();
 const timer = setInterval(() => {
   if (!predictor || !haveClock || ws.readyState !== WebSocket.OPEN) return;
   const tick = ++predTick;
-  const { ax, ay } = intent(Date.now() - started);
+  const { ax, ay } = intent(Date.now() - started, myId % 2 === 1);
   seq++;
   const input = { ax, ay };
   predictor.setInput(tick, input);
@@ -124,8 +140,15 @@ setTimeout(() => {
   console.log(`  mean error  ${mean.toFixed(6)} units`);
   console.log(`  worst error ${worstError.toFixed(6)} units  (limit ${MAX_ALLOWED_ERROR})`);
 
+  console.log(`  star contacts ${starContacts}`);
+
   if (measured === 0) {
     console.error('predict-check: FAILED — nothing was measured');
+    process.exit(1);
+  }
+  if (starContacts === 0) {
+    console.error('predict-check: FAILED — never touched the star, so collision');
+    console.error('  prediction was not exercised. Fix the movement script.');
     process.exit(1);
   }
   if (worstError > MAX_ALLOWED_ERROR) {

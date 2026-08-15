@@ -52,22 +52,27 @@ public final class Messages {
             @JsonProperty("thrust") double thrust,
             @JsonProperty("maxSpeed") double maxSpeed,
             @JsonProperty("restitution") double restitution,
-            @JsonProperty("bodyRestitution") double bodyRestitution) {
+            @JsonProperty("bodyRestitution") double bodyRestitution,
+            @JsonProperty("team") int team,
+            @JsonProperty("jaws") double jaws) {
         public static Welcome of(int id, double w, double h, int hz,
-                double thrust, double maxSpeed, double restitution, double bodyRestitution) {
+                double thrust, double maxSpeed, double restitution, double bodyRestitution,
+                int team, double jaws) {
             return new Welcome("welcome", id, w, h, hz, thrust, maxSpeed,
-                    restitution, bodyRestitution);
+                    restitution, bodyRestitution, team, jaws);
         }
     }
 
-    /** One body in a snapshot. */
+    /** One body in a snapshot. {@code team} is 0, 1, or -1 for the star. */
     public record BodyState(
             @JsonProperty("id") int id,
             @JsonProperty("x") double x,
             @JsonProperty("y") double y,
             @JsonProperty("vx") double vx,
             @JsonProperty("vy") double vy,
-            @JsonProperty("r") double r) {}
+            @JsonProperty("r") double r,
+            @JsonProperty("m") double m,
+            @JsonProperty("team") int team) {}
 
     /**
      * The world as the server sees it, which is the only version that counts.
@@ -83,9 +88,13 @@ public final class Messages {
             @JsonProperty("tick") long tick,
             @JsonProperty("ack") long ack,
             @JsonProperty("missed") long missed,
+            @JsonProperty("scoreA") int scoreA,
+            @JsonProperty("scoreB") int scoreB,
+            @JsonProperty("freeze") int freeze,
             @JsonProperty("bodies") List<BodyState> bodies) {
-        public static Snapshot of(long tick, long ack, long missed, List<BodyState> bodies) {
-            return new Snapshot("state", tick, ack, missed, bodies);
+        public static Snapshot of(long tick, long ack, long missed,
+                int scoreA, int scoreB, int freeze, List<BodyState> bodies) {
+            return new Snapshot("state", tick, ack, missed, scoreA, scoreB, freeze, bodies);
         }
     }
 }

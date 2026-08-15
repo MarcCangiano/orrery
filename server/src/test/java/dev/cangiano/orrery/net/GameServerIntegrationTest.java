@@ -156,7 +156,20 @@ class GameServerIntegrationTest {
 
         JsonNode snapshot = lastMatching(two, "state");
         assertNotNull(snapshot);
-        assertEquals(2, snapshot.get("bodies").size(), "both players should be in the world");
+
+        int players = 0;
+        int stars = 0;
+        for (JsonNode b : snapshot.get("bodies")) {
+            if (b.get("id").asInt() == dev.cangiano.orrery.sim.Arena.STAR_ID) {
+                stars++;
+            } else {
+                players++;
+            }
+        }
+        assertEquals(2, players, "both players should be in the world");
+        assertEquals(1, stars, "and so should the star");
+        assertTrue(snapshot.has("scoreA") && snapshot.has("scoreB"),
+                "snapshots carry the score");
     }
 
     /** Snapshots start 16ms after connect, so a test that reads one immediately loses the race. */

@@ -42,8 +42,12 @@ const RESYNC_THRESHOLD = 10;
 
 const cfg = {
   w: 120, h: 70, hz: 60, thrust: 60, maxSpeed: 40, restitution: 0.75,
-  dt: 1 / 60, dtMs: 1000 / 60,
+  bodyRestitution: 0.9, dt: 1 / 60, dtMs: 1000 / 60, jaws: 70 / 6,
 };
+
+const STAR_ID = -1;
+const TEAM_COLOR = ['#7fa8e3', '#e0b062'];   // Norse frost, Greek gold
+const TEAM_NAME = ['Norse', 'Greek'];
 
 let myId = null;
 let predictor = null;
@@ -57,6 +61,9 @@ const snapshots = [];
 let serverTick = 0;
 let serverMe = null;
 let missedOnServer = 0;
+let myTeam = 0;
+let score = [0, 0];
+let freeze = 0;
 
 let rttMs = 0;
 const sentAt = new Map();
@@ -110,8 +117,10 @@ function handle(raw) {
     Object.assign(cfg, {
       w: m.w, h: m.h, hz: m.hz, thrust: m.thrust,
       maxSpeed: m.maxSpeed, restitution: m.restitution,
+      bodyRestitution: m.bodyRestitution, jaws: m.jaws,
       dt: 1 / m.hz, dtMs: 1000 / m.hz,
     });
+    myTeam = m.team;
     predictor = new Predictor(cfg, myId, { x: cfg.w / 2, y: cfg.h / 2, r: 1.6 });
     return;
   }
@@ -120,6 +129,8 @@ function handle(raw) {
 
   serverTick = m.tick;
   missedOnServer = m.missed;
+  score = [m.scoreA, m.scoreB];
+  freeze = m.freeze;
   snapshots.push({ at: performance.now(), tick: m.tick, bodies: m.bodies });
   while (snapshots.length > 32) snapshots.shift();
 
@@ -151,7 +162,7 @@ function handle(raw) {
   // The predictor compares the truth against what IT had predicted for that same
   // tick, not against where we are now. We are deliberately ahead of the server,
   // so comparing now-against-then would report the lead as an error.
-  replayedLast = predictor.reconcile(m.tick, truth);
+  replayedLast = predictor.reconcile(m.tick, m.bodies, m.freeze);
   correctionError = predictor.lastError;
   worstCorrection = predictor.worstError;
 }
@@ -234,6 +245,26 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
+/**
+ * The star is the only light in here, so it is drawn as a light rather than as
+ * a circle: a hot core inside a falloff that reaches most of the arena.
+ */
+function drawStar(b) {
+  const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 9);
+  glow.addColorStop(0, 'rgba(255,236,190,0.55)');
+  glow.addColorStop(0.25, 'rgba(255,196,90,0.18)');
+  glow.addColorStop(1, 'rgba(255,170,40,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, b.r * 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffe9b0';
+  ctx.fill();
+}
+
 function draw(now) {
   const W = canvas.width, H = canvas.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -249,12 +280,29 @@ function draw(now) {
   ctx.strokeStyle = '#1c2740';
   ctx.strokeRect(0, 0, cfg.w, cfg.h);
 
+  // The jaws: the stretch of each end wall a star can be fed through.
+  const midY = cfg.h / 2;
+  ctx.lineWidth = 5 / scale;
+  for (const [x, team] of [[0, 1], [cfg.w, 0]]) {
+    ctx.beginPath();
+    ctx.moveTo(x, midY - cfg.jaws);
+    ctx.lineTo(x, midY + cfg.jaws);
+    ctx.strokeStyle = TEAM_COLOR[team];
+    ctx.globalAlpha = 0.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  ctx.lineWidth = 2 / scale;
+
   for (const b of interpolatedBodies(now)) {
     if (b.id === myId) continue;
+    if (b.id === STAR_ID) { drawStar(b); continue; }
     ctx.beginPath();
     ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-    ctx.fillStyle = '#4a6fa5';
+    ctx.fillStyle = b.team === myTeam ? '#4a6fa5' : '#8a5a3c';
     ctx.fill();
+    ctx.strokeStyle = TEAM_COLOR[b.team] ?? '#666';
+    ctx.stroke();
   }
 
   // The server's opinion of where you are. With prediction working it sits under
@@ -274,6 +322,8 @@ function draw(now) {
     ctx.arc(me.x, me.y, r, 0, Math.PI * 2);
     ctx.fillStyle = '#7fe3c0';
     ctx.fill();
+    ctx.strokeStyle = TEAM_COLOR[myTeam];
+    ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(me.x, me.y);
     ctx.lineTo(me.x + me.vx * 0.12, me.y + me.vy * 0.12);
@@ -283,7 +333,9 @@ function draw(now) {
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   hud.innerHTML =
-    `orrery  <b>you are ${myId ?? '...'}</b>\n` +
+    `<b>${score[0]}</b> Norse   Greek <b>${score[1]}</b>` +
+    (freeze > 0 ? '   <span id="warn">goal</span>' : '') + `\n` +
+    `orrery  <b>you are ${myId ?? '...'}</b> (${TEAM_NAME[myTeam]})\n` +
     `server tick ${serverTick}   client tick ${predTick}   lead ${predTick - serverTick}\n` +
     `rtt ${rttMs.toFixed(0)}ms   fake lag ${fakeLagMs}ms   missed on server ${missedOnServer}\n` +
     `prediction ${predictionOn ? '<b>on</b>' : '<span id="warn">off</span>'}` +

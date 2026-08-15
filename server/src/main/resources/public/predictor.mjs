@@ -31,9 +31,11 @@ export class Predictor {
    */
   constructor(cfg, id, start) {
     this.cfg = cfg;
+    this.id = id;
     this.world = new World(cfg.w, cfg.h, {
       maxSpeed: cfg.maxSpeed,
       wallRestitution: cfg.restitution,
+      bodyRestitution: cfg.bodyRestitution,
     });
     this.body = this.world.add(new Body(id, start.x, start.y, start.r ?? 1.6, 1));
     this.inputs = new Map();   // tick -> {ax, ay}
@@ -50,10 +52,13 @@ export class Predictor {
   }
 
   /** Advance one tick, using the input for it or holding the last one. */
-  advance(tick) {
+  advance(tick, frozen = false) {
     const input = this.inputs.get(tick) ?? this.held;
     this.held = input;
-    stepWithInput(this.world, this.body, input, this.cfg.thrust, this.cfg.dt);
+    // During the pause after a goal the server ignores thrust, so predicting
+    // any would put us somewhere the server never goes.
+    const applied = frozen ? { ax: 0, ay: 0 } : input;
+    stepWithInput(this.world, this.body, applied, this.cfg.thrust, this.cfg.dt);
     this.tick = tick;
     this.history.set(tick, {
       x: this.body.x, y: this.body.y, vx: this.body.vx, vy: this.body.vy,
@@ -67,18 +72,56 @@ export class Predictor {
    * @returns the distance between what we had predicted for that tick and what
    *          actually happened. Near zero means the two simulations agree.
    */
-  reconcile(serverTick, truth) {
+  /**
+   * Bring the local world in line with a snapshot: add bodies that appeared,
+   * drop ones that left, and set every one of them to the server's numbers.
+   *
+   * <p>The whole world is mirrored, not just your own body, because the star
+   * you are about to hit is part of your own prediction. Other players are
+   * mirrored too and then simulated with no input at all, which is wrong the
+   * moment they thrust, and right for the fraction of a second that matters
+   * for a collision. They are drawn from interpolated snapshots regardless, so
+   * the error never reaches the screen except through contact with you.
+   */
+  syncWorld(bodies) {
+    const seen = new Set();
+    for (const s of bodies) {
+      seen.add(s.id);
+      let b = this.world.byId(s.id);
+      if (!b) {
+        b = this.world.add(new Body(s.id, s.x, s.y, s.r, s.m ?? 1));
+        if (s.id === this.id) this.body = b;
+      }
+      b.x = s.x; b.y = s.y; b.vx = s.vx; b.vy = s.vy;
+      b.radius = s.r;
+      if (s.m) b.mass = s.m;
+    }
+    // Anything the server no longer has, we no longer have.
+    this.world.bodies = this.world.bodies.filter(b => seen.has(b.id));
+    const mine = this.world.byId(this.id);
+    if (mine) this.body = mine;
+  }
+
+  reconcile(serverTick, truth, frozenTicks = 0) {
+    const mine = Array.isArray(truth)
+        ? truth.find(b => b.id === this.id)
+        : truth;
+    if (!mine) return 0;
     const predicted = this.history.get(serverTick);
     if (predicted) {
-      this.lastError = Math.hypot(predicted.x - truth.x, predicted.y - truth.y);
+      this.lastError = Math.hypot(predicted.x - mine.x, predicted.y - mine.y);
       if (this.lastError > this.worstError) this.worstError = this.lastError;
     }
 
-    this.body.x = truth.x;
-    this.body.y = truth.y;
-    this.body.vx = truth.vx;
-    this.body.vy = truth.vy;
-    if (truth.r) this.body.radius = truth.r;
+    if (Array.isArray(truth)) {
+      this.syncWorld(truth);
+    } else {
+      this.body.x = truth.x;
+      this.body.y = truth.y;
+      this.body.vx = truth.vx;
+      this.body.vy = truth.vy;
+      if (truth.r) this.body.radius = truth.r;
+    }
 
     // Re-establish what the server would have been holding at this point, so a
     // replayed gap holds the same intent the server held.
@@ -86,11 +129,13 @@ export class Predictor {
 
     const to = this.tick;
     this.history.clear();
-    this.history.set(serverTick, { x: truth.x, y: truth.y, vx: truth.vx, vy: truth.vy });
+    this.history.set(serverTick, { x: mine.x, y: mine.y, vx: mine.vx, vy: mine.vy });
 
     let replayed = 0;
     for (let t = serverTick + 1; t <= to; t++) {
-      this.advance(t);
+      // Ticks still inside the post-goal pause are replayed without thrust,
+      // matching what the server did with them.
+      this.advance(t, replayed < frozenTicks);
       replayed++;
     }
     this.tick = to;

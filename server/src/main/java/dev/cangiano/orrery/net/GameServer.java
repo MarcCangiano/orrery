@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.cangiano.orrery.FixedTickLoop;
 import dev.cangiano.orrery.TimeSource;
+import dev.cangiano.orrery.sim.Arena;
 import dev.cangiano.orrery.sim.Body;
 import dev.cangiano.orrery.sim.World;
 import io.javalin.Javalin;
@@ -57,15 +58,16 @@ public final class GameServer {
      */
     private static final int INPUT_RING = 256;
 
-    private static final double ARENA_W = 120;
-    private static final double ARENA_H = 70;
-    private static final double PLAYER_RADIUS = 1.6;
-    private static final double PLAYER_MASS = 1.0;
-
     private final ObjectMapper json = new ObjectMapper();
-    private final World world = new World(ARENA_W, ARENA_H);
+    private final World world = new World(Arena.WIDTH, Arena.HEIGHT);
     private final Map<WsContext, Player> players = new ConcurrentHashMap<>();
     private final AtomicInteger nextId = new AtomicInteger(1);
+    private final Body star = world.add(new Body(Arena.STAR_ID,
+            Arena.WIDTH / 2, Arena.HEIGHT / 2, Arena.STAR_RADIUS, Arena.STAR_MASS));
+
+    private final int[] score = new int[2];
+    /** Ticks left of the pause after a goal. Inputs are ignored while it runs. */
+    private int freeze;
 
     private Javalin app;
     private Thread simThread;
@@ -99,16 +101,17 @@ public final class GameServer {
                 Player p = new Player(id);
                 players.put(ctx, p);
 
-                double x = ARENA_W * (0.25 + 0.5 * (id % 2));
-                double y = ARENA_H * 0.5;
+                int team = Arena.teamOf(id);
                 synchronized (world) {
-                    world.add(new Body(id, x, y, PLAYER_RADIUS, PLAYER_MASS));
+                    world.add(new Body(id, Arena.spawnX(team), Arena.spawnY(id / 2),
+                            Arena.PLAYER_RADIUS, Arena.PLAYER_MASS));
                 }
 
-                ctx.send(write(Messages.Welcome.of(id, ARENA_W, ARENA_H, TICK_HZ,
+                ctx.send(write(Messages.Welcome.of(id, Arena.WIDTH, Arena.HEIGHT, TICK_HZ,
                         THRUST, World.MAX_SPEED, World.WALL_RESTITUTION,
-                        World.BODY_RESTITUTION)));
-                System.out.printf("player %d connected (%d online)%n", id, players.size());
+                        World.BODY_RESTITUTION, team, Arena.JAWS_HALF_HEIGHT)));
+                System.out.printf("player %d joined team %d (%d online)%n",
+                        id, team, players.size());
             });
 
             ws.onMessage(ctx -> {
@@ -177,12 +180,27 @@ public final class GameServer {
                             p.missed++;
                         }
                         Body b = world.byId(p.id);
-                        if (b != null) {
+                        // Nobody thrusts during the pause after a goal. The
+                        // reset is only legible if the world holds still for it.
+                        if (b != null && freeze == 0) {
                             b.applyForce(p.lastApplied.ax() * THRUST,
                                     p.lastApplied.ay() * THRUST, dt);
                         }
                     }
                     world.step(dt);
+
+                    if (freeze > 0) {
+                        freeze--;
+                    } else {
+                        int scorer = Arena.scoringTeam(star);
+                        if (scorer >= 0) {
+                            score[scorer]++;
+                            resetPositions();
+                            freeze = Arena.RESET_TICKS;
+                            System.out.printf("goal for team %d  (%d - %d)%n",
+                                    scorer, score[0], score[1]);
+                        }
+                    }
                 }
                 if (tick % SNAPSHOT_EVERY == 0) {
                     broadcast(tick);
@@ -205,12 +223,31 @@ public final class GameServer {
         }
     }
 
+    /** Everything back where it started, at rest. Called after a goal. */
+    private void resetPositions() {
+        star.x = Arena.WIDTH / 2;
+        star.y = Arena.HEIGHT / 2;
+        star.vx = 0;
+        star.vy = 0;
+        for (Player p : players.values()) {
+            Body b = world.byId(p.id);
+            if (b != null) {
+                b.x = Arena.spawnX(Arena.teamOf(p.id));
+                b.y = Arena.spawnY(p.id / 2);
+                b.vx = 0;
+                b.vy = 0;
+            }
+        }
+    }
+
     private void broadcast(long tick) {
         List<Messages.BodyState> states;
         synchronized (world) {
             states = new ArrayList<>(world.bodies().size());
             for (Body b : world.bodies()) {
-                states.add(new Messages.BodyState(b.id, b.x, b.y, b.vx, b.vy, b.radius));
+                int team = b.id == Arena.STAR_ID ? -1 : Arena.teamOf(b.id);
+                states.add(new Messages.BodyState(b.id, b.x, b.y, b.vx, b.vy,
+                        b.radius, b.mass, team));
             }
         }
         // Each client gets its own frame, because ack is per client.
@@ -218,7 +255,8 @@ public final class GameServer {
             WsContext ctx = e.getKey();
             if (ctx.session.isOpen()) {
                 Player p = e.getValue();
-                ctx.send(write(Messages.Snapshot.of(tick, p.ack, p.missed, states)));
+                ctx.send(write(Messages.Snapshot.of(tick, p.ack, p.missed,
+                        score[0], score[1], freeze, states)));
             }
         }
     }
