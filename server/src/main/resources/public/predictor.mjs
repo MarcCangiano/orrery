@@ -148,9 +148,18 @@ export class Predictor {
         : truth;
     if (!mine) return 0;
     const predicted = this.history.get(serverTick);
-    if (predicted) {
+    /*
+     * A goal teleports every body back to its spawn, which is an authoritative
+     * event rather than a failure of prediction. Counting it made the HUD report
+     * a worst correction of 85 units, most of the arena, on a client whose
+     * prediction was in fact exact. The number is only worth showing if it means
+     * one thing.
+     */
+    if (predicted && frozenTicks === 0) {
       this.lastError = Math.hypot(predicted.x - mine.x, predicted.y - mine.y);
       if (this.lastError > this.worstError) this.worstError = this.lastError;
+    } else if (frozenTicks > 0) {
+      this.lastError = 0;
     }
 
     if (Array.isArray(truth)) {

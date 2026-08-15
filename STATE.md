@@ -77,6 +77,8 @@ Two reasons, in order:
 - [ ] Lag compensation for the shove
 - [x] Match flow: first to 5, a longer pause, then a fresh match
 - [x] A bot opponent, so one person opening the link gets a game
+- [x] Look: trails, thruster plume, impact flashes, star pulse, split scoreboard
+- [x] ?auto=1 autopilot, for demos and for taking screenshots of live play
 - [ ] Sound
 - [ ] Deploy: server on a box, client on Pages
 

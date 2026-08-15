@@ -30,6 +30,7 @@ import { Predictor } from './predictor.mjs';
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const hud = document.getElementById('hud');
+const scoreboard = document.getElementById('score');
 
 // Other players used to be drawn from interpolated snapshots, roughly 80ms in
 // the past. That is the standard answer and it is the wrong one here.
@@ -168,6 +169,7 @@ function handle(raw) {
     bodyTether.set(b.id, b.tether);
   }
   captureDrawOffsets();
+  spotImpacts(m.bodies);
   snapshots.push({ at: performance.now(), tick: m.tick, bodies: m.bodies });
   while (snapshots.length > 32) snapshots.shift();
 
@@ -210,6 +212,33 @@ function handle(raw) {
   worstCorrection = predictor.worstError;
 }
 
+/**
+ * Autopilot, switched on with ?auto=1.
+ *
+ * <p>For demos, screenshots and recordings: open the link with the flag and the
+ * page plays itself. It drives the same input path as a person, so nothing about
+ * the netcode is bypassed, and there is no branch in the server at all.
+ */
+const AUTOPILOT = new URLSearchParams(location.search).get('auto') === '1';
+
+function autopilot() {
+  const star = predictor?.world?.byId(STAR_ID);
+  const me = predictor?.body;
+  if (!star || !me) return { ax: 0, ay: 0, sh: false, th: false };
+
+  const dx = star.x - me.x;
+  const dy = star.y - me.y;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const phase = Math.floor(performance.now() / 1500) % 4;
+
+  if (phase === 3) {
+    // Back off and swing on the rope, which is the interesting thing to watch.
+    return { ax: -dy / len, ay: dx / len, sh: false, th: true };
+  }
+  const closeEnough = len < star.radius + me.radius + cfg.shoveRange * 0.7;
+  return { ax: dx / len, ay: dy / len, sh: closeEnough, th: false };
+}
+
 function readKeys() {
   let ax = 0, ay = 0;
   if (keys.has('a') || keys.has('arrowleft')) ax -= 1;
@@ -228,11 +257,19 @@ function readKeys() {
 function localTick() {
   if (myId === null || !haveClock || !predictor) return;
   const tick = ++predTick;
-  const { ax, ay } = readKeys();
+  let { ax, ay } = readKeys();
   // One shove per press, not one per tick the bar is held down.
-  const sh = shoveHeld && tick >= predictor.shoveReadyTick;
+  let sh = shoveHeld && tick >= predictor.shoveReadyTick;
   if (sh) shoveHeld = false;
-  const th = keys.has('shift');
+  let th = keys.has('shift');
+
+  if (AUTOPILOT) {
+    const a = autopilot();
+    ax = a.ax;
+    ay = a.ay;
+    sh = a.sh && tick >= predictor.shoveReadyTick;
+    th = a.th;
+  }
   seq++;
   const input = { ax, ay, sh, th };
   predictor.setInput(tick, input);
@@ -261,6 +298,101 @@ let accumulator = 0;
  * it. The simulation is never smoothed, only the picture of it.
  */
 const drawOffset = new Map();   // id -> {dx, dy}
+
+/* ---- Look ----------------------------------------------------------------
+ * All of this is drawing only. None of it touches the simulation, and none of
+ * it is allowed to: the physics has to stay identical to the server's, and a
+ * trail that nudged a position would be the least funny bug in the project.
+ */
+const trails = new Map();       // id -> [{x, y}], newest last
+const lastVel = new Map();      // id -> {vx, vy}, for spotting impacts
+const flashes = [];             // {x, y, born, strength}
+const TRAIL_LENGTH = 16;
+
+function recordTrails() {
+  if (!predictor) return;
+  for (const b of predictor.world.bodies) {
+    if (b.immovable) continue;
+    let trail = trails.get(b.id);
+    if (!trail) { trail = []; trails.set(b.id, trail); }
+    trail.push({ x: b.x, y: b.y });
+    if (trail.length > TRAIL_LENGTH) trail.shift();
+  }
+  for (const id of trails.keys()) {
+    if (!predictor.world.byId(id)) trails.delete(id);
+  }
+}
+
+/** A hit is a velocity that changed faster than a thruster could change it. */
+function spotImpacts(bodies) {
+  for (const b of bodies) {
+    const was = lastVel.get(b.id);
+    lastVel.set(b.id, { vx: b.vx, vy: b.vy });
+    if (!was) continue;
+    const delta = Math.hypot(b.vx - was.vx, b.vy - was.vy);
+    /*
+     * Thrust across one snapshot is about 2 units/s, so 4 looked like a safe
+     * floor for "that was a hit". It was not: a body sliding along a fragment
+     * clears it on almost every snapshot, and the screen filled with a chain of
+     * rings following each player around. 9 only fires on a real collision or a
+     * shove, and a flash that appears rarely is worth more than one that is
+     * always on.
+     */
+    if (delta > 9) {
+      const now = performance.now();
+      // One flash per body at a time, so a long contact does not stack.
+      const recent = flashes.some(f => f.id === b.id && now - f.born < 200);
+      if (!recent) {
+        flashes.push({ id: b.id, x: b.x, y: b.y, born: now,
+                       strength: Math.min(delta / 24, 1) });
+        if (flashes.length > 24) flashes.shift();
+      }
+    }
+  }
+}
+
+function drawFlashes(now) {
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i];
+    const age = (now - f.born) / 420;
+    if (age >= 1) { flashes.splice(i, 1); continue; }
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, 1 + age * 7 * f.strength, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255, 232, 190, ${(1 - age) * 0.5 * f.strength})`;
+    ctx.stroke();
+  }
+}
+
+function drawTrail(b, color) {
+  const trail = trails.get(b.id);
+  if (!trail || trail.length < 2) return;
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1], c = trail[i];
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(c.x, c.y);
+    ctx.strokeStyle = color.replace('ALPHA', String((i / trail.length) * 0.28));
+    ctx.stroke();
+  }
+}
+
+/** The plume, drawn opposite the thrust, for the one body whose input we know. */
+function drawPlume(me) {
+  const input = predictor?.inputs.get(predTick) ?? predictor?.held;
+  if (!input || (input.ax === 0 && input.ay === 0)) return;
+  const len = Math.sqrt(input.ax * input.ax + input.ay * input.ay);
+  if (len === 0) return;
+  const nx = -input.ax / len, ny = -input.ay / len;
+  const base = me.radius * 0.85;
+  const tip = me.radius * (2.4 + Math.sin(performance.now() / 40) * 0.35);
+  ctx.beginPath();
+  ctx.moveTo(me.x + nx * base - ny * base * 0.5, me.y + ny * base + nx * base * 0.5);
+  ctx.lineTo(me.x + nx * tip, me.y + ny * tip);
+  ctx.lineTo(me.x + nx * base + ny * base * 0.5, me.y + ny * base - nx * base * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(127, 227, 192, .38)';
+  ctx.fill();
+}
 
 function smoothedBodies() {
   if (!predictor) return [];
@@ -345,7 +477,9 @@ function drawStar(b) {
   // Reach and strength both pulled back from the first attempt, which lit the
   // whole top of the screen and made the HUD hard to read. The star should say
   // "here I am" from across the arena without being the brightest thing on it.
-  const reach = b.r * 6;
+  // A slow pulse, so a star sitting still still reads as something burning.
+  const pulse = 1 + Math.sin(performance.now() / 620) * 0.06;
+  const reach = b.r * 6 * pulse;
   const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, reach);
   glow.addColorStop(0, 'rgba(255,236,190,0.38)');
   glow.addColorStop(0.3, 'rgba(255,196,90,0.10)');
@@ -376,6 +510,9 @@ function draw(now) {
   ctx.strokeStyle = '#1c2740';
   ctx.strokeRect(0, 0, cfg.w, cfg.h);
 
+  recordTrails();
+  drawFlashes(now);
+
   // The jaws: the stretch of each end wall a star can be fed through.
   const midY = cfg.h / 2;
   ctx.lineWidth = 5 / scale;
@@ -402,6 +539,7 @@ function draw(now) {
       ctx.stroke();
       continue;
     }
+    drawTrail(b, b.team === myTeam ? 'rgba(74,111,165,ALPHA)' : 'rgba(138,90,60,ALPHA)');
     ctx.beginPath();
     ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
     ctx.fillStyle = b.team === myTeam ? '#4a6fa5' : '#8a5a3c';
@@ -445,6 +583,8 @@ function draw(now) {
   const me = predictionOn ? predictor?.body : serverMe;
   if (me) {
     const r = me.radius ?? me.r;
+    drawTrail(me, 'rgba(127,227,192,ALPHA)');
+    drawPlume(me);
     ctx.beginPath();
     ctx.arc(me.x, me.y, r, 0, Math.PI * 2);
     ctx.fillStyle = '#7fe3c0';
@@ -474,11 +614,12 @@ function draw(now) {
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  scoreboard.innerHTML =
+    `<span class="norse">NORSE <b>${score[0]}</b></span>` +
+    `<span style="opacity:.4">   ·   </span>` +
+    `<span class="greek"><b>${score[1]}</b> GREEK</span>`;
+
   hud.innerHTML =
-    `<b>${score[0]}</b> Norse   Greek <b>${score[1]}</b>` +
-    (winner >= 0
-      ? `   <span id="warn">${TEAM_NAME[winner]} win</span>`
-      : freeze > 0 ? '   <span id="warn">goal</span>' : '') + `\n` +
     `orrery  <b>you are ${myId ?? '...'}</b> (${TEAM_NAME[myTeam]})\n` +
     `server tick ${serverTick}   client tick ${predTick}   lead ${predTick - serverTick}\n` +
     `rtt ${rttMs.toFixed(0)}ms   fake lag ${fakeLagMs}ms   missed on server ${missedOnServer}\n` +
@@ -487,7 +628,8 @@ function draw(now) {
     `correction ${correctionError.toFixed(4)}  worst ${worstCorrection.toFixed(4)}\n` +
     `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
         Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
-    `WASD thrust   SPACE shove   SHIFT tether   P prediction   L lag   G ghost`;
+    `WASD thrust   SPACE shove   SHIFT tether   P prediction   L lag   G ghost` +
+    (AUTOPILOT ? '   <b>autopilot</b>' : '');
 }
 
 requestAnimationFrame(frame);

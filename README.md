@@ -14,7 +14,8 @@ prediction. Norse against Greek.
 
 Controls: **WASD** thrust, **SPACE** shove, **SHIFT** tether.
 Debug: **P** toggles prediction, **L** adds fake lag, **G** shows the server's
-ghost.
+ghost. Add `?auto=1` and the page plays itself, which is how the screenshots are
+taken and how you watch prediction work without needing three hands.
 
 ---
 
@@ -131,7 +132,10 @@ server/src/main/resources/public/
   sim.mjs                 the same physics, in JavaScript
   predictor.mjs           prediction and reconciliation
   game.mjs                input, rendering, the clock estimate
-tools/                    the checks that catch netcode bugs
+tools/                    the checks that catch netcode bugs, plus shot.mjs,
+                          which drives Chrome over the DevTools Protocol in
+                          real time because --screenshot fires on load and
+                          --virtual-time-budget outruns a real socket
 ```
 
 `sim.mjs` is a line-for-line mirror of the Java, and the drift check fails the
