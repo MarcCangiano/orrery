@@ -17,7 +17,8 @@ A player who has not picked a side has no body at all, which is what makes
 spectating free: a connection without a team is simply a connection without a
 body.
 
-Controls: **WASD** thrust, **SPACE** shove, **SHIFT** tether.
+Controls: **WASD** thrust, **SPACE** shove, **SHIFT** tether, **ESC** back to the
+lobby, **M** mute.
 Debug: **P** toggles prediction, **L** adds fake lag, **G** shows the server's
 ghost. Add `?auto=1` and the page plays itself, which is how the screenshots are
 taken and how you watch prediction work without needing three hands.

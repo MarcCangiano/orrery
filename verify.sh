@@ -5,8 +5,9 @@
 #   2. drift check: Java and JavaScript physics agree bit for bit
 #   3. predict check: a real client's prediction matches the real server
 #   4. spectator check: someone who has not joined can still see the arena
-#   5. client check: the browser page loads and comes alive
-#   6. audio check: every effect renders to a buffer with signal in it
+#   5. leave check: ESC returns you to the lobby and the room recovers
+#   6. client check: the browser page loads and comes alive
+#   7. audio check: every effect renders to a buffer with signal in it
 #
 # The third one starts a server on its own port and shuts it down after, so it
 # never fights with one you already have running.
@@ -45,6 +46,10 @@ node tools/predict-check.mjs "ws://localhost:$port/ws"
 echo
 echo "--- spectator check (the arena is visible before you join)"
 node tools/spectator-check.mjs "ws://localhost:$port/ws"
+
+echo
+echo "--- leave check (ESC gives up your side without dropping the socket)"
+node tools/leave-check.mjs "ws://localhost:$port/ws"
 
 echo
 echo "--- client check (the actual page, in a browser)"

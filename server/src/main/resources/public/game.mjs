@@ -173,6 +173,7 @@ addEventListener('keydown', e => {
     return;
   }
   const k = e.key.toLowerCase();
+  if (k === 'escape') { leaveMatch(); e.preventDefault(); return; }
   if (k === ' ') { shoveHeld = true; e.preventDefault(); return; }
   if (k === 'm') { sound.toggleMute(); return; }
   if (k === 'p') { predictionOn = !predictionOn; return; }
@@ -306,8 +307,19 @@ function handle(raw) {
   countdown = m.countdown;
   sideCounts = [m.norse, m.greek];
   soundCues();
+  /*
+   * No body means no side, rather than keeping the last one we saw.
+   *
+   * This used to only ever assign a team, never clear one, which was invisible
+   * while the only way out of a match was closing the tab. ESC made it matter:
+   * the server takes the body away, every later snapshot has nothing for us,
+   * and without this the client would still believe it was playing and never
+   * show the lobby again.
+   */
   const mine = m.bodies.find(b => b.id === myId);
-  if (mine) myTeam = mine.team;
+  const teamNow = mine ? mine.team : -1;
+  if (teamNow < 0 && myTeam >= 0) lobbyScreen = 'start';
+  myTeam = teamNow;
   for (const b of m.bodies) {
     bodyTeam.set(b.id, b.team);
     bodyTether.set(b.id, b.tether);
@@ -489,6 +501,37 @@ function startPressed() {
 function pickSide(team) {
   sound.uiSelect();
   send({ t: 'pick', team });
+}
+
+/**
+ * ESC: give up your side and go back to watching.
+ *
+ * <p>The overlay is put back immediately rather than waiting for the server to
+ * take the body away. That answer is a round trip out, and a menu key that does
+ * nothing for 40ms feels broken in a way that a menu key cannot afford to. The
+ * snapshot that follows agrees, so nothing flickers; the local change is the
+ * same one the server is about to send.
+ *
+ * <p>From the side-picking screen it steps back to START instead, because the
+ * key people press to back out of a menu is this one.
+ */
+function leaveMatch() {
+  sound.unlock();
+  if (myTeam < 0) {
+    if (lobbyScreen === 'sides') {
+      lobbyScreen = 'start';
+      sound.uiMove();
+      renderOverlay();
+    }
+    return;
+  }
+  myTeam = -1;
+  lobbyScreen = 'start';
+  denied = '';
+  silence();
+  sound.uiMove();
+  send({ t: 'leave' });
+  renderOverlay();
 }
 
 /**
@@ -1053,6 +1096,7 @@ function drawHud() {
     `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
         Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
     `WASD thrust   SPACE shove   SHIFT tether   C camera ${cameraFollows ? 'follow' : 'wide'}` +
+    `   ESC lobby` +
     `   M sound ${sound.muted ? '<span id="warn">off</span>' : 'on'}` +
     `   P prediction   L lag   G ghost` +
     (AUTOPILOT ? '   <b>autopilot</b>' : '') +

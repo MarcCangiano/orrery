@@ -80,7 +80,8 @@ Two reasons, in order:
 - [x] Look: trails, thruster plume, impact flashes, star pulse, split scoreboard
 - [x] ?auto=1 autopilot, for demos and for taking screenshots of live play
 - [x] Lobby: start screen, pick a side, five second countdown, then kick off.
-      Teams are chosen rather than assigned by join order
+      Teams are chosen rather than assigned by join order. ESC gives up your
+      side and goes back, without dropping the socket
 - [x] 3D renderer (Three.js, vendored). The simulation stays 2D and verified;
       only the picture is dimensional. ?flat=1 keeps the canvas renderer
 - [x] Artwork: 18 textures generated and wired in. See docs/ART-BRIEF.md for
@@ -140,10 +141,11 @@ Two rules fell out of measuring, both in `predictor.mjs`:
 
     ./verify.sh
 
-Six gates: the tests, the Java-versus-JavaScript drift check, a headless client
-that plays for nine seconds against a real server and measures its own
-prediction error, a spectator check, a browser load of the actual page, and an
-audio check that renders every effect to a buffer and measures the samples.
+Seven gates: the tests, the Java-versus-JavaScript drift check, a headless
+client that plays for nine seconds against a real server and measures its own
+prediction error, a spectator check, a leave check, a browser load of the actual
+page, and an audio check that renders every effect to a buffer and measures the
+samples.
 
 The unit tests will never catch a netcode bug; the drift and prediction checks
 exist for that. The browser check exists because all of the others passed while

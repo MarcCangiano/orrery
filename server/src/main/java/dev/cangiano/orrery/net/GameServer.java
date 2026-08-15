@@ -182,6 +182,10 @@ public final class GameServer {
                     pickTeam(p, node.path("team").asInt(0));
                     return;
                 }
+                if ("leave".equals(type)) {
+                    leaveTeam(p);
+                    return;
+                }
                 if (!"input".equals(type)) {
                     return;
                 }
@@ -249,6 +253,38 @@ public final class GameServer {
             }
         }
         System.out.printf("player %d took team %d%n", p.id, team);
+        balanceBots();
+    }
+
+    /**
+     * Give up your side and go back to watching, without dropping the socket.
+     *
+     * <p>This is deliberately not the same code path as a disconnect. A
+     * disconnect must be treated as temporary, because a client that reconnects
+     * a moment later has to find the match still running; that is why
+     * {@link #removePlayer} only resets an empty room. Leaving is a decision,
+     * so when the last person with a side leaves the match really is over and
+     * the room goes back to the lobby with the score cleared.
+     */
+    private void leaveTeam(Player p) {
+        if (p.team < 0) {
+            return;
+        }
+        synchronized (world) {
+            p.team = -1;
+            // The body goes with the side. A player in the lobby is a
+            // connection with no body, which is the same state they arrived in.
+            world.remove(p.id);
+            if (readyHumans() == 0) {
+                phase = Phase.LOBBY;
+                countdown = 0;
+                winner = -1;
+                score[0] = 0;
+                score[1] = 0;
+                resetPositions();
+            }
+        }
+        System.out.printf("player %d went back to the lobby%n", p.id);
         balanceBots();
     }
 
