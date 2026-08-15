@@ -667,7 +667,18 @@ function finishDrawOffsets() {
 
 function frame() {
   draw(performance.now());
-  requestAnimationFrame(frame);
+  /*
+ * A read-only handle for tests. tools and the input tests use it to ask the
+ * renderer where a body actually lands on screen, rather than reimplementing
+ * the projection and then testing their own arithmetic.
+ */
+window.__orrery = {
+  get renderer3d() { return renderer3d; },
+  get THREE() { return renderer3d?.THREE; },
+  me: () => (myTeam < 0 ? null : (predictionOn ? predictor?.body : serverMe)),
+};
+
+requestAnimationFrame(frame);
 }
 
 /**

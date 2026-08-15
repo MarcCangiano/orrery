@@ -22,6 +22,8 @@ const TEAM_COLOR = [0x7fa8e3, 0xe0b062];
 export class Renderer3D {
   constructor(canvas, cfg) {
     this.cfg = cfg;
+    // Exposed so a test can project a world position through this exact camera.
+    this.THREE = THREE;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -73,6 +75,24 @@ export class Renderer3D {
     this.flashRings = [];
 
     this.sphere = new THREE.SphereGeometry(1, 32, 24);
+  }
+
+  /**
+   * World Y to scene Y, mirrored.
+   *
+   * <p>The simulation uses screen conventions: Y grows downward, the way a
+   * canvas does, and W thrusts toward smaller Y. Dropping those coordinates
+   * straight into a 3D scene puts +Y into the screen, so pressing W walked the
+   * body UP the arena and DOWN the screen. Controls were inverted and it was
+   * the renderer's fault, not the input's.
+   *
+   * <p>Mirroring here rather than flipping the camera keeps X the right way
+   * round: a camera moved to the far side would have fixed up and down and
+   * inverted left and right instead. The static geometry is symmetric about
+   * this axis, so only moving things need the mapping.
+   */
+  mapY(y) {
+    return this.cfg.h - y;
   }
 
   buildArena() {
@@ -178,7 +198,7 @@ export class Renderer3D {
         side: THREE.DoubleSide,
       }),
     );
-    ring.position.set(x, y, 0.05);
+    ring.position.set(x, this.mapY(y), 0.05);
     this.scene.add(ring);
     this.flashRings.push({ ring, born: performance.now(), strength });
   }
@@ -194,11 +214,11 @@ export class Renderer3D {
     for (const b of bodies) {
       seen.add(b.id);
       const mesh = this.meshFor(b);
-      mesh.position.set(b.x, b.y, b.r);
+      mesh.position.set(b.x, this.mapY(b.y), b.r);
       mesh.scale.setScalar(b.r);
 
       if (b.id === -1) {
-        this.starLight.position.set(b.x, b.y, b.r * 2.2);
+        this.starLight.position.set(b.x, this.mapY(b.y), b.r * 2.2);
         const pulse = 1 + Math.sin(performance.now() / 620) * 0.07;
         mesh.material.emissiveIntensity = 1.4 * pulse;
       } else if (b.id === myId) {
@@ -239,8 +259,8 @@ export class Renderer3D {
         this.tetherLines.set(b.id, line);
       }
       line.geometry.setFromPoints([
-        new THREE.Vector3(b.x, b.y, b.r),
-        new THREE.Vector3(anchor.x, anchor.y, anchor.r),
+        new THREE.Vector3(b.x, this.mapY(b.y), b.r),
+        new THREE.Vector3(anchor.x, this.mapY(anchor.y), anchor.r),
       ]);
     }
     for (const [id, line] of this.tetherLines) {
@@ -284,7 +304,7 @@ export class Renderer3D {
       this.scene.add(this.ghostMesh);
     }
     this.ghostMesh.visible = true;
-    this.ghostMesh.position.set(ghost.x, ghost.y, ghost.r);
+    this.ghostMesh.position.set(ghost.x, this.mapY(ghost.y), ghost.r);
     this.ghostMesh.scale.setScalar(ghost.r * 1.06);
   }
 
