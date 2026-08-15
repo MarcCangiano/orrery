@@ -65,10 +65,20 @@ const profile = mkdtempSync(join(tmpdir(), 'orrery-audio-'));
 const chrome = spawn(CHROME, [
   '--headless=new',
   '--enable-unsafe-swiftshader',
-  // Headless Chrome has no output device. OfflineAudioContext does not need
-  // one, but the page also constructs media elements, and this keeps their
-  // failure from being an unhandled rejection that stops the script.
-  '--autoplay-policy=no-user-gesture-required',
+  /*
+   * The autoplay policy is deliberately LEFT ALONE.
+   *
+   * This used to run with --autoplay-policy=no-user-gesture-required, which
+   * made the check pass while being structurally incapable of catching the most
+   * likely way this feature breaks: sound that never starts because the gesture
+   * handling is wrong. The whole unlock path existed and was never tested.
+   *
+   * So the browser here refuses to make a sound until something is pressed,
+   * exactly as a real one does, and the check presses a real key through the
+   * DevTools input domain to earn it. --mute-audio stays, because the machine
+   * running this does not need to hear it; it silences the output device, not
+   * the policy.
+   */
   '--mute-audio',
   '--hide-scrollbars',
   `--remote-debugging-port=${PORT}`,

@@ -29,8 +29,17 @@ public final class Arena {
      */
     public static final double JAWS_HALF_HEIGHT = HEIGHT / 6;
 
-    /** Ticks the world holds still after a goal, so a score is legible. */
-    public static final int RESET_TICKS = 90;
+    /**
+     * Ticks the world holds still after a goal, so a score is legible.
+     *
+     * <p>Was 90, a second and a half. Shortened because the pause was being
+     * reported as the game freezing rather than read as a goal: with the old
+     * bot scoring every six seconds, a quarter of the wall clock was spent
+     * stopped. One second is still long enough to read the banner and see the
+     * reset, and it is the second half of that fix — the first is that the bot
+     * no longer scores nearly as often.
+     */
+    public static final int RESET_TICKS = 60;
 
     /** Ticks between the last player readying up and the first kick. */
     public static final int COUNTDOWN_TICKS = 300;

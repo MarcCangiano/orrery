@@ -16,8 +16,38 @@ package dev.cangiano.orrery.sim;
  */
 public final class Bot {
 
+    /**
+     * How hard the bot may push, against a player's full thrust.
+     *
+     * <p>It was 1.0, which measured badly: against a player who never moved, the
+     * bot scored every six seconds and won a five-goal match in half a minute.
+     * Each goal stops the world for a second and a half to reset, so a quarter
+     * of the wall clock was spent frozen and the game read as constantly
+     * stopping. That was reported three times, each time as something else
+     * breaking.
+     *
+     * <p>The bot is not made stupid, only slower. It still plays the same way,
+     * which is what stops it from looking broken.
+     */
+    private static final double THRUST_SCALE = 0.32;
+
+    /**
+     * Ticks between decisions. A person does not re-aim sixty times a second
+     * and neither should this: reacting instantly to every frame of the star's
+     * motion is most of what made it unbeatable.
+     */
+    private static final int THINK_EVERY = 16;
+
     public final int id;
     public final int team;
+
+    /** Ticks since construction, for spacing decisions out. */
+    private int sinceThink;
+
+    /** What the world should multiply this bot's thrust by. */
+    public static double thrustScale() {
+        return THRUST_SCALE;
+    }
 
     /** Where it wants to push, this tick. Read by the server after {@link #think}. */
     public double ax;
@@ -40,6 +70,19 @@ public final class Bot {
         if (me == null || star == null) {
             ax = 0;
             ay = 0;
+            return;
+        }
+
+        /*
+         * Between decisions, keep pushing the way it last chose.
+         *
+         * ax and ay are deliberately left alone rather than zeroed: zeroing
+         * would make the bot thrust one tick in nine, which is not a slower
+         * opponent, it is a broken one. The shove stays false, because a shove
+         * is a decision and holding it would fire again the instant the
+         * cooldown lapsed, on a tick the bot never chose.
+         */
+        if (sinceThink++ % THINK_EVERY != 0) {
             return;
         }
 

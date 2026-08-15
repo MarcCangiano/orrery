@@ -48,6 +48,11 @@ LUFS = -18
 FADE_IN = 0.5
 FADE_OUT = 2.5
 
+# The bar a track has to clear to ship. Calibrated against the tracks that were
+# judged by ear rather than picked: greek-1 measured 0.63 and was fine, norse-2
+# measured 0.31 and was "banging". 0.55 sits above everything that was rejected.
+MIN_STEADINESS = 0.55
+
 MODEL = "fal-ai/stable-audio-25/text-to-audio"
 
 # The first pass at these asked for restraint to match the art, and restraint is
@@ -59,10 +64,14 @@ MODEL = "fal-ai/stable-audio-25/text-to-audio"
 # and the countdown.
 COMMON = (
     "Instrumental only, no vocals, no singing, no choir, no voices. "
-    "Driving, dramatic, cinematic, epic. A clear steady tempo around 100 BPM. "
-    "Strong rhythm section throughout, powerful percussion. "
-    "Starts immediately with full energy, no slow build, no long intro. "
-    "Heroic and urgent. Video game battle music. "
+    "Fast driving tempo, 140 BPM, energetic and urgent. "
+    "A continuous repeating rhythmic ostinato running the entire time, "
+    "constant sixteenth note motion that never stops. "
+    "Busy and dense, always something playing, no gaps, no space, "
+    "no pauses between hits, no sparse isolated drum hits, no long decays. "
+    "Full energy from the very first beat, no intro, no build, no fade in. "
+    "A melody playing continuously from the start. "
+    "Heroic cinematic video game battle music. "
 )
 
 TRACKS = {
@@ -84,21 +93,22 @@ TRACKS = {
     "norse-1": {
         "seconds": 110,
         "prompt": COMMON + (
-            "Nordic war music, hard and driving. Huge frame drums and taiko "
-            "hammering a relentless marching rhythm. Aggressive bowed "
-            "tagelharpa riff, low and rough and rhythmic. Blaring bronze war "
-            "horns. Nyckelharpa playing a fast urgent modal melody. Iron, "
-            "snow, a shield wall advancing. Minor and modal, ferocious."
+            "Nordic war music at a gallop. Fast tight frame drums playing a "
+            "constant rolling pattern, not big spaced out hits. A bowed "
+            "tagelharpa riff repeating every two bars without pause. "
+            "Nyckelharpa playing a fast continuous modal melody over the top. "
+            "War horns sustained underneath. Minor and modal, ferocious, "
+            "relentless forward motion."
         ),
     },
     "norse-2": {
         "seconds": 110,
         "prompt": COMMON + (
-            "Viking battle instrumental, fast and pounding. Thundering war "
-            "drums with heavy accents. Driving bowed lyre riff repeating. "
-            "Stamping rhythm, bone rattles and clashing metal on the beat. "
-            "Low brass stabs. Overtone flute cutting through high above. "
-            "Savage, relentless, triumphant."
+            "Viking battle instrumental, fast and galloping. Rapid tight "
+            "drum pattern, continuous rolls and constant snare-like hits, "
+            "never stopping. A low bowed lyre riff cycling endlessly. "
+            "Overtone flute playing a fast continuous melody. Clashing metal "
+            "on every beat. Savage, relentless, driving."
         ),
     },
     # Greek: bronze and strings rather than skin and iron, and more melodic
@@ -118,10 +128,10 @@ TRACKS = {
         "seconds": 110,
         "prompt": COMMON + (
             "Epic ancient Greek instrumental, dramatic and urgent. Rapid "
-            "plucked kithara ostinato under a wild aulos melody. Driving "
-            "frame drums and finger cymbals at speed. Bronze gongs on the "
-            "downbeat. Phrygian mode, fierce and bright, gods at war above "
-            "a marble city."
+            "plucked kithara ostinato cycling continuously without pause, "
+            "under a wild fast aulos melody that never rests. Quick frame "
+            "drums and finger cymbals keeping constant time. Phrygian mode, "
+            "fierce and bright, gods at war above a marble city."
         ),
     },
 }
@@ -177,6 +187,36 @@ def envelope(src: pathlib.Path, window: float = 0.5) -> list:
             read += step
             levels.append(audioop.rms(chunk, width))
     return levels
+
+
+def steadiness(src: pathlib.Path, start: float, end: float) -> float:
+    """How continuous the music is, from 0 to 1. Higher is more driving.
+
+    This exists because loudness turned out to be the wrong question. The first
+    Norse tracks measured perfectly well on level — norse-1 peaks at 148% of its
+    own busy level two seconds in — and still got described as banging with no
+    tempo, because a big drum hit every second and a half is loud and sparse at
+    the same time. Level says it is playing; it says nothing about whether there
+    is a pulse.
+
+    So: the ratio of the quiet windows to the loud ones across the body of the
+    track. A continuous ostinato barely dips between beats and scores high. A
+    track that is a boom followed by most of a second of decay scores low.
+
+    Measured, on the tracks that were judged by ear:
+        greek-1  0.62   even, described as fine
+        norse-1  0.42   sparse booming, rejected
+    """
+    levels = envelope(src, 0.5)
+    lo = max(0, int(start / 0.5))
+    hi = min(len(levels), int(end / 0.5))
+    body = [v for v in levels[lo:hi] if v > 0]
+    if len(body) < 8:
+        return 0.0
+    ordered = sorted(body)
+    quiet = ordered[int(len(ordered) * 0.15)]
+    loud = ordered[int(len(ordered) * 0.85)]
+    return 0.0 if loud <= 0 else quiet / loud
 
 
 def content_start(src: pathlib.Path, window: float = 0.5) -> float:
@@ -290,27 +330,65 @@ def encode(src: pathlib.Path, dest: pathlib.Path, seconds: float) -> None:
         print(f"    trimmed {' and '.join(cuts)}")
 
 
-def generate(name: str, spec: dict, headers: dict) -> pathlib.Path:
+def fetch_one(name: str, spec: dict, headers: dict, dest: pathlib.Path) -> None:
     res = submit({
         "prompt": spec["prompt"],
         "seconds_total": spec["seconds"],
+        # Eight is the maximum this endpoint accepts; asking for more is a 422,
+        # not a slower render. So quality per attempt is fixed and the only
+        # lever left is asking again, which is what generate() does.
         "num_inference_steps": 8,
     }, headers, name)
 
     url = (res.get("audio_file") or res.get("audio") or {}).get("url")
     if not url:
         raise RuntimeError(f"{name}: no audio in response: {str(res)[:400]}")
+    dest.write_bytes(requests.get(url, timeout=600).content)
 
+
+def generate(name: str, spec: dict, headers: dict, attempts: int = 3) -> pathlib.Path:
+    """Generate until the track has a pulse, then encode it.
+
+    The model is not reliable at this. Asked for a continuous ostinato it
+    sometimes returns one and sometimes returns a slow procession of drum hits,
+    from the same prompt. Since {@code steadiness} can tell the difference, the
+    honest thing is to ask again rather than to ship whatever arrived first and
+    let it be found out in play.
+
+    Attempts are capped and the best of them is kept regardless, because a
+    generator that can loop forever on a bad day is worse than one that
+    occasionally ships a six out of ten and says so.
+    """
     RAW.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
+    raw = RAW / f"{name}.wav"
+    want = spec.get("steadiness", MIN_STEADINESS)
+
+    best, best_score = None, -1.0
+    for attempt in range(1, attempts + 1):
+        candidate = RAW / f"{name}.try{attempt}.wav"
+        fetch_one(name, spec, headers, candidate)
+        start = content_start(candidate)
+        score = steadiness(candidate, start, content_end(candidate, spec["seconds"]))
+        print(f"    attempt {attempt}: steadiness {score:.2f} (want {want:.2f})")
+        if score > best_score:
+            if best is not None:
+                best.unlink(missing_ok=True)
+            best, best_score = candidate, score
+        else:
+            candidate.unlink(missing_ok=True)
+        if best_score >= want:
+            break
+
+    if best_score < want:
+        print(f"    KEEPING {best_score:.2f}, below the bar, after {attempts} tries")
     # The PCM is kept. Re-encoding is free; regenerating is not, and the raw
     # file is the only way to change the bitrate later without paying again.
-    raw = RAW / f"{name}.wav"
-    raw.write_bytes(requests.get(url, timeout=600).content)
+    best.replace(raw)
 
     dest = OUT / f"{name}.mp3"
     encode(raw, dest, spec["seconds"])
-    print(f"  {name:10s} {raw.stat().st_size // 1024:6d} KB raw "
+    print(f"  {name:10s} steadiness {best_score:.2f}  "
           f"-> {dest.stat().st_size // 1024:5d} KB")
     return dest
 

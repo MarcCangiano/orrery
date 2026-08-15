@@ -538,7 +538,8 @@ public final class GameServer {
                             world.shove(b, Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE);
                             botShoveReady = tick + Arena.SHOVE_COOLDOWN;
                         }
-                        b.applyForce(bot.ax * THRUST, bot.ay * THRUST, dt);
+                        double botThrust = THRUST * Bot.thrustScale();
+                        b.applyForce(bot.ax * botThrust, bot.ay * botThrust, dt);
                     }
 
                     world.step(dt);
