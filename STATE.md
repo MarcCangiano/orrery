@@ -76,6 +76,7 @@ Two reasons, in order:
 - [ ] Interest management
 - [ ] Lag compensation for the shove
 - [x] Match flow: first to 5, a longer pause, then a fresh match
+- [x] A bot opponent, so one person opening the link gets a game
 - [ ] Sound
 - [ ] Deploy: server on a box, client on Pages
 

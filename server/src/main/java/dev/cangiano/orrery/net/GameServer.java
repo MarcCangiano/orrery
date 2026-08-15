@@ -6,6 +6,7 @@ import dev.cangiano.orrery.FixedTickLoop;
 import dev.cangiano.orrery.TimeSource;
 import dev.cangiano.orrery.sim.Arena;
 import dev.cangiano.orrery.sim.Body;
+import dev.cangiano.orrery.sim.Bot;
 import dev.cangiano.orrery.sim.World;
 import io.javalin.Javalin;
 import io.javalin.websocket.WsContext;
@@ -67,6 +68,20 @@ public final class GameServer {
 
     private final int[] score = new int[2];
     private final List<Body> fragments = new ArrayList<>();
+    private final List<Bot> bots = new ArrayList<>();
+    private long botShoveReady;
+
+    /**
+     * Bots off with ORRERY_BOTS=0.
+     *
+     * <p>Used by the prediction check, which measures how closely a client's own
+     * prediction tracks the server. A bot is another player, and another
+     * player's INTENT is the one thing a client cannot predict, so leaving bots
+     * on would mix an unavoidable and well-understood error into the number that
+     * is supposed to isolate prediction fidelity.
+     */
+    private final boolean botsEnabled =
+            !"0".equals(System.getenv("ORRERY_BOTS"));
     /** Ticks left of the pause after a goal. Inputs are ignored while it runs. */
     private int freeze;
     /** Team that won the match in progress, or -1 while it is still being played. */
@@ -131,6 +146,7 @@ public final class GameServer {
                         Arena.TETHER_REACH, Arena.TETHER_MAX_LENGTH)));
                 System.out.printf("player %d joined team %d (%d online)%n",
                         id, team, players.size());
+                balanceBots();
             });
 
             ws.onMessage(ctx -> {
@@ -171,6 +187,44 @@ public final class GameServer {
                 world.remove(p.id);
             }
             System.out.printf("player %d left (%d online)%n", p.id, players.size());
+            balanceBots();
+        }
+    }
+
+    /**
+     * Keep exactly one opponent on the far side while a single person is
+     * playing, and get out of the way the moment a second person arrives.
+     *
+     * <p>A bot is a body in the world like any other, so a client predicts and
+     * draws it without knowing the difference. That is the point: if the bot
+     * needed special handling on the client, it would also be a second code
+     * path through everything that matters.
+     */
+    private void balanceBots() {
+        if (!botsEnabled) {
+            return;
+        }
+        synchronized (world) {
+            int humans = players.size();
+            int wanted = humans == 1 ? 1 : 0;
+            while (bots.size() > wanted) {
+                Bot gone = bots.remove(bots.size() - 1);
+                world.remove(gone.id);
+                System.out.printf("bot %d left%n", gone.id);
+            }
+            while (bots.size() < wanted) {
+                // Take an id on the opposite team to the lone human.
+                int humanId = players.values().iterator().next().id;
+                int id = nextId.getAndIncrement();
+                if (Arena.teamOf(id) == Arena.teamOf(humanId)) {
+                    id = nextId.getAndIncrement();
+                }
+                Bot bot = new Bot(id);
+                bots.add(bot);
+                world.add(new Body(id, Arena.spawnX(bot.team), Arena.spawnY(id / 2),
+                        Arena.PLAYER_RADIUS, Arena.PLAYER_MASS));
+                System.out.printf("bot %d joined team %d%n", id, bot.team);
+            }
         }
     }
 
@@ -269,6 +323,19 @@ public final class GameServer {
                                     p.lastApplied.ay() * THRUST, dt);
                         }
                     }
+                    for (Bot bot : bots) {
+                        Body b = world.byId(bot.id);
+                        if (b == null || freeze > 0) {
+                            continue;
+                        }
+                        bot.think(b, star);
+                        if (bot.shove && tick >= botShoveReady) {
+                            world.shove(b, Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE);
+                            botShoveReady = tick + Arena.SHOVE_COOLDOWN;
+                        }
+                        b.applyForce(bot.ax * THRUST, bot.ay * THRUST, dt);
+                    }
+
                     world.step(dt);
 
                     if (freeze > 0) {
@@ -375,6 +442,15 @@ public final class GameServer {
                 b.vy = 0;
             }
             p.anchor = null;
+        }
+        for (Bot bot : bots) {
+            Body b = world.byId(bot.id);
+            if (b != null) {
+                b.x = Arena.spawnX(bot.team);
+                b.y = Arena.spawnY(bot.id / 2);
+                b.vx = 0;
+                b.vy = 0;
+            }
         }
     }
 

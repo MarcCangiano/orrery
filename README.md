@@ -137,6 +137,17 @@ tools/                    the checks that catch netcode bugs
 `sim.mjs` is a line-for-line mirror of the Java, and the drift check fails the
 build if it ever stops being one.
 
+## Playing alone
+
+Open the page by yourself and a bot joins on the other side. It leaves the
+moment a second person arrives. It steers to the far side of the star so its
+pushes send the star toward the jaws it is attacking, brakes instead of orbiting
+when it is closing fast, drops back to defend when the star gets behind it, and
+does not shove when shoving would score an own goal. It does not use the tether:
+a bot that swings better than a new player is discouraging rather than useful.
+
+Against a player who never moves, it wins 5-0 in about a minute.
+
 ## Running it against a friend
 
 The server is a single process with no dependencies beyond a JVM. Point them at

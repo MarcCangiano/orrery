@@ -22,7 +22,10 @@ echo "--- drift check (java vs javascript physics)"
 echo
 echo "--- predict check (client prediction vs live server)"
 port=$(( 20000 + RANDOM % 20000 ))
-ORRERY_PORT="$port" ./gradlew -q :server:run > /tmp/orrery-verify.log 2>&1 &
+# Bots off: a bot is another player, and another player's intent is precisely
+# what a client cannot predict. Leaving them on would fold a known, unavoidable
+# error into the number that exists to isolate prediction fidelity.
+ORRERY_PORT="$port" ORRERY_BOTS=0 ./gradlew -q :server:run > /tmp/orrery-verify.log 2>&1 &
 gradle_pid=$!
 cleanup() {
   kill "$gradle_pid" 2>/dev/null || true
