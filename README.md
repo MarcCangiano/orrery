@@ -152,6 +152,13 @@ a bot that swings better than a new player is discouraging rather than useful.
 
 Against a player who never moves, it wins 5-0 in about a minute.
 
+## Deploying
+
+    docker build -t orrery . && docker run -p 7070:7070 orrery
+
+One process serves both the game and the client, so there is nothing else to
+stand up. `ORRERY_PORT` moves the port, `ORRERY_BOTS=0` turns the bot off.
+
 ## Running it against a friend
 
 The server is a single process with no dependencies beyond a JVM. Point them at

@@ -123,20 +123,59 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+/*
+ * The socket reconnects on its own.
+ *
+ * <p>A dropped connection used to leave the page looking like the game had
+ * frozen, with no way back except a manual reload, which is the wrong thing to
+ * ask of someone whose wifi blinked. On reconnect the server issues a fresh id
+ * and a fresh body, so the client throws away everything it believed: the
+ * predictor, the clock, the pending inputs. Keeping any of it would mean
+ * predicting a body that no longer exists.
+ */
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const ws = new WebSocket(`${proto}://${location.host}/ws`);
+let ws = null;
+let reconnectDelay = 500;
+let connected = false;
+
+function connect() {
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    connected = true;
+    reconnectDelay = 500;
+  };
+
+  ws.onmessage = ev => {
+    if (fakeLagMs > 0) setTimeout(() => handle(ev.data), fakeLagMs);
+    else handle(ev.data);
+  };
+
+  ws.onclose = () => {
+    connected = false;
+    myId = null;
+    predictor = null;
+    haveClock = false;
+    trails.clear();
+    lastVel.clear();
+    drawOffset.clear();
+    // Back off up to five seconds, so a server that is down does not get a
+    // connection attempt every half second from every open tab.
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+  };
+
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
 
 function send(obj) {
-  if (ws.readyState !== WebSocket.OPEN) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const payload = JSON.stringify(obj);
   if (fakeLagMs > 0) setTimeout(() => ws.send(payload), fakeLagMs);
   else ws.send(payload);
 }
 
-ws.onmessage = ev => {
-  if (fakeLagMs > 0) setTimeout(() => handle(ev.data), fakeLagMs);
-  else handle(ev.data);
-};
+connect();
 
 function handle(raw) {
   const m = JSON.parse(raw);
@@ -629,7 +668,8 @@ function draw(now) {
     `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
         Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
     `WASD thrust   SPACE shove   SHIFT tether   P prediction   L lag   G ghost` +
-    (AUTOPILOT ? '   <b>autopilot</b>' : '');
+    (AUTOPILOT ? '   <b>autopilot</b>' : '') +
+    (connected ? '' : '\n<span id="warn">disconnected, reconnecting</span>');
 }
 
 requestAnimationFrame(frame);

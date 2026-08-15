@@ -80,7 +80,13 @@ Two reasons, in order:
 - [x] Look: trails, thruster plume, impact flashes, star pulse, split scoreboard
 - [x] ?auto=1 autopilot, for demos and for taking screenshots of live play
 - [ ] Sound
-- [ ] Deploy: server on a box, client on Pages
+- [x] CI: GitHub Actions runs the tests, the drift check and the prediction
+      check on every push. The browser check skips cleanly without Chrome
+- [x] Dockerfile: two stages, JRE and a jar, one process serves game and client
+- [x] Reconnect: the socket comes back on its own, tested by killing the server
+      under a live client and watching it recover
+- [ ] Deploy to a real host (needs a box and Boss's call on spend)
+- [ ] Push to GitHub (Boss's call: publishing is his to authorize)
 
 ## How the clock works, because it is the non-obvious part
 

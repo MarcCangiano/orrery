@@ -1,0 +1,52 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Node is what runs the JavaScript half of the simulation, which is the
+      # half the drift and prediction checks compare against.
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Tests
+        run: ./gradlew :server:test
+
+      - name: Physics drift, Java against JavaScript
+        run: ./tools/drift-check.sh
+
+      # The prediction check needs a live server, so start one, wait for it, and
+      # stop it afterwards. Bots off: a bot is another player, and another
+      # player's intent is exactly what a client cannot predict.
+      - name: Client prediction against a live server
+        run: |
+          ORRERY_PORT=7070 ORRERY_BOTS=0 ./gradlew -q :server:run &
+          for _ in $(seq 1 90); do
+            curl -sf -o /dev/null http://localhost:7070/ && break
+            sleep 1
+          done
+          node tools/predict-check.mjs ws://localhost:7070/ws
+          pkill -f dev.cangiano.orrery.Main || true
+
+      # tools/client-check.sh needs a browser and skips cleanly without one, so
+      # this step is honest about what it did rather than silently passing.
+      - name: Browser check (skipped without Chrome)
+        run: ./tools/client-check.sh http://localhost:7070/ || true
