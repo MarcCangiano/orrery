@@ -114,6 +114,12 @@ public final class GameServer {
         final int id;
         /** The side this player chose, or -1 while they are still in the lobby. */
         volatile int team = -1;
+        /**
+         * Which spawn slot on that side. Fixed when the side is chosen and kept,
+         * because working it out again from the player id at reset time put two
+         * team mates on the same spot and marched later joiners off the middle.
+         */
+        volatile int seat;
         /** Written by network threads, read by the sim thread. Slot is tick % INPUT_RING. */
         final AtomicReferenceArray<Command> ring = new AtomicReferenceArray<>(INPUT_RING);
         // Only the sim thread touches these.
@@ -209,11 +215,25 @@ public final class GameServer {
         if (team != 0 && team != 1) {
             return;
         }
+        /*
+         * Sides may never differ by more than one.
+         *
+         * Nothing stopped two people both choosing Norse, so both spawned on the
+         * same half against nobody, which is the "both teams start on the same
+         * side" that was reported. The client offers the emptier side on ENTER
+         * and greys out a full one, and this is the rule underneath that: the
+         * server decides, because the client can be wrong or old.
+         */
+        if (p.team != team && countTeam(team) > countTeam(1 - team)) {
+            ctxOf(p).ifPresent(ctx -> ctx.send(write(new java.util.HashMap<>(java.util.Map.of(
+                    "t", "denied", "reason", "that side is full")))));
+            return;
+        }
         synchronized (world) {
             p.team = team;
+            p.seat = Math.max(countTeam(team) - 1, 0);
             if (world.byId(p.id) == null) {
-                int seat = countTeam(team) - 1;
-                world.add(new Body(p.id, Arena.spawnX(team), Arena.spawnY(Math.max(seat, 0)),
+                world.add(new Body(p.id, Arena.spawnX(team), Arena.spawnY(p.seat),
                         Arena.PLAYER_RADIUS, Arena.PLAYER_MASS));
             }
             if (phase == Phase.LOBBY) {
@@ -227,6 +247,16 @@ public final class GameServer {
         }
         System.out.printf("player %d took team %d%n", p.id, team);
         balanceBots();
+    }
+
+    /** The socket belonging to a player, for the rare message aimed at one person. */
+    private java.util.Optional<WsContext> ctxOf(Player target) {
+        for (Map.Entry<WsContext, Player> e : players.entrySet()) {
+            if (e.getValue() == target) {
+                return java.util.Optional.of(e.getKey());
+            }
+        }
+        return java.util.Optional.empty();
     }
 
     private int countTeam(int team) {
@@ -258,9 +288,17 @@ public final class GameServer {
             }
             System.out.printf("player %d left (%d online)%n", p.id, players.size());
             balanceBots();
-            if (readyHumans() == 0) {
-                // Last player out: back to the lobby rather than leaving a match
-                // running for an audience of bots.
+            /*
+             * Only an empty room goes back to the lobby.
+             *
+             * This used to trigger whenever nobody had a team, which included
+             * the instant between a client's socket dropping and its automatic
+             * reconnect. The match was wiped, the score was reset, and from the
+             * player's side the round simply stopped half way through, which is
+             * exactly what was reported. A brief disconnect must cost you your
+             * body and nothing else.
+             */
+            if (players.isEmpty()) {
                 synchronized (world) {
                     phase = Phase.LOBBY;
                     countdown = 0;
@@ -269,6 +307,7 @@ public final class GameServer {
                     score[1] = 0;
                     resetPositions();
                 }
+                System.out.println("room empty, back to the lobby");
             }
         }
     }
@@ -541,7 +580,7 @@ public final class GameServer {
             Body b = world.byId(p.id);
             if (b != null) {
                 b.x = Arena.spawnX(p.team >= 0 ? p.team : Arena.teamOf(p.id));
-                b.y = Arena.spawnY(p.id / 2);
+                b.y = Arena.spawnY(p.seat);
                 b.vx = 0;
                 b.vy = 0;
             }

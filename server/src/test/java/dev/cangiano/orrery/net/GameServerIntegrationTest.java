@@ -186,6 +186,86 @@ class GameServerIntegrationTest {
                 "snapshots carry the score");
     }
 
+    @Test
+    void twoPlayersCannotPileOntoTheSameSide() throws Exception {
+        int port = freePort();
+        server = new GameServer();
+        server.start(port);
+
+        Collector one = new Collector();
+        WebSocket wsOne = HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws"), one)
+                .get(5, TimeUnit.SECONDS);
+        assertTrue(one.welcomed.await(5, TimeUnit.SECONDS));
+
+        Collector two = new Collector();
+        WebSocket wsTwo = HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws"), two)
+                .get(5, TimeUnit.SECONDS);
+        assertTrue(two.welcomed.await(5, TimeUnit.SECONDS));
+
+        // Both ask for Norse. Nothing used to stop them, so both spawned on the
+        // same half of the arena with nobody opposing them.
+        wsOne.sendText("{\"t\":\"pick\",\"team\":0}", true).get();
+        Thread.sleep(250);
+        wsTwo.sendText("{\"t\":\"pick\",\"team\":0}", true).get();
+        Thread.sleep(400);
+
+        JsonNode snap = lastMatching(two, "state");
+        assertNotNull(snap);
+        assertEquals(1, snap.get("norse").asInt(), "the second pick must be refused");
+        assertEquals(0, snap.get("greek").asInt(), "and must not silently move them either");
+
+        boolean refused = false;
+        synchronized (two.messages) {
+            for (String m : two.messages) {
+                if (m.contains("\"denied\"")) {
+                    refused = true;
+                }
+            }
+        }
+        assertTrue(refused, "the player must be told why nothing happened");
+
+        // The other side is still open.
+        wsTwo.sendText("{\"t\":\"pick\",\"team\":1}", true).get();
+        Thread.sleep(400);
+        snap = lastMatching(two, "state");
+        assertEquals(1, snap.get("greek").asInt(), "and joining the emptier side works");
+    }
+
+    @Test
+    void aDisconnectDoesNotWipeAMatchInProgress() throws Exception {
+        int port = freePort();
+        server = new GameServer();
+        server.start(port);
+
+        Collector staying = new Collector();
+        WebSocket wsStaying = HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws"), staying)
+                .get(5, TimeUnit.SECONDS);
+        assertTrue(staying.welcomed.await(5, TimeUnit.SECONDS));
+
+        Collector leaving = new Collector();
+        WebSocket wsLeaving = HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws"), leaving)
+                .get(5, TimeUnit.SECONDS);
+        assertTrue(leaving.welcomed.await(5, TimeUnit.SECONDS));
+
+        wsStaying.sendText("{\"t\":\"pick\",\"team\":0}", true).get();
+        wsLeaving.sendText("{\"t\":\"pick\",\"team\":1}", true).get();
+        awaitPlaying(staying);
+
+        // One of them drops, which is what a browser does for a moment whenever
+        // a network hiccups and its client reconnects.
+        wsLeaving.sendClose(WebSocket.NORMAL_CLOSURE, "bye").get(2, TimeUnit.SECONDS);
+        Thread.sleep(600);
+
+        JsonNode snap = lastMatching(staying, "state");
+        assertNotNull(snap);
+        assertEquals("playing", snap.get("phase").asText(),
+                "the round must keep running for whoever is still here");
+    }
+
     /** Waits out the five second countdown, during which nothing moves by design. */
     private void awaitPlaying(Collector c) throws Exception {
         long deadline = System.nanoTime() + 12_000_000_000L;

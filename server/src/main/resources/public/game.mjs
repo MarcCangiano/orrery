@@ -103,6 +103,7 @@ let countdown = 0;
 let sideCounts = [0, 0];
 /** start, sides, or none: what the overlay is showing, which the server does not decide. */
 let lobbyScreen = 'start';
+let denied = '';
 let shoveReady = 0;
 const bodyTeam = new Map();
 const bodyTether = new Map();
@@ -243,6 +244,12 @@ function handle(raw) {
     return;
   }
 
+  if (m.t === 'denied') {
+    denied = m.reason ?? 'no';
+    overlayKey = '';           // force the panel to redraw with the message
+    return;
+  }
+
   if (m.t !== 'state' || !predictor) return;
 
   serverTick = m.tick;
@@ -355,7 +362,7 @@ function renderOverlay() {
    * unclickable, and nothing in the console said why.
    */
   const seconds = Math.max(1, Math.ceil(countdown / cfg.hz));
-  const key = [lobbyScreen, phase, myTeam, sideCounts[0], sideCounts[1],
+  const key = [lobbyScreen, phase, myTeam, sideCounts[0], sideCounts[1], denied,
                phase === 'countdown' ? seconds : 0].join('|');
   if (key === overlayKey) return;
   overlayKey = key;
@@ -379,17 +386,22 @@ function renderOverlay() {
     return;
   }
 
+  // A side that is already ahead cannot be joined; the server enforces it and
+  // this only saves someone the click.
+  const norseFull = sideCounts[0] > sideCounts[1];
+  const greekFull = sideCounts[1] > sideCounts[0];
   panel.innerHTML =
     `<h1>PICK A SIDE</h1>` +
     `<div class="tag">left jaws are Greek, right jaws are Norse</div>` +
     `<div class="sides">` +
-      `<button class="norse" data-team="0">NORSE</button>` +
-      `<button class="greek" data-team="1">GREEK</button>` +
+      `<button class="norse" data-team="0"${norseFull ? ' disabled' : ''}>NORSE</button>` +
+      `<button class="greek" data-team="1"${greekFull ? ' disabled' : ''}>GREEK</button>` +
     `</div>` +
-    `<div class="count">${sideCounts[0]} norse · ${sideCounts[1]} greek</div>` +
+    `<div class="count">${sideCounts[0]} norse · ${sideCounts[1]} greek` +
+      (denied ? `   <span id="warn">${denied}</span>` : '') + `</div>` +
     `<div class="hint">click a side, or press ENTER or SPACE to take the emptier one</div>`;
   for (const b of panel.querySelectorAll('[data-team]')) {
-    b.onclick = () => pickSide(Number(b.dataset.team));
+    if (!b.disabled) b.onclick = () => pickSide(Number(b.dataset.team));
   }
 }
 

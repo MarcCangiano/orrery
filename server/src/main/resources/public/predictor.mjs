@@ -146,7 +146,21 @@ export class Predictor {
     const mine = Array.isArray(truth)
         ? truth.find(b => b.id === this.id)
         : truth;
+
+    /*
+     * Mirror the world FIRST, even with no body of our own.
+     *
+     * This used to return immediately when the snapshot contained no body for
+     * this client, which is the normal state of anyone sitting in the lobby or
+     * reconnecting. The local world was then never synced, so the star, the ring
+     * fragments and every other player were simply absent from the screen: the
+     * reported "objects aren't on the map". Watching is a thing people do.
+     */
+    if (Array.isArray(truth)) {
+      this.syncWorld(truth);
+    }
     if (!mine) return 0;
+
     const predicted = this.history.get(serverTick);
     /*
      * A goal teleports every body back to its spawn, which is an authoritative
@@ -162,9 +176,7 @@ export class Predictor {
       this.lastError = 0;
     }
 
-    if (Array.isArray(truth)) {
-      this.syncWorld(truth);
-    } else {
+    if (!Array.isArray(truth)) {
       this.body.x = truth.x;
       this.body.y = truth.y;
       this.body.vx = truth.vx;
