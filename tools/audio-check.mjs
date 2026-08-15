@@ -255,9 +255,24 @@ const total = tracks.reduce((a, t) => a + t.bytes, 0);
 const wsUrl = url.replace(/^http/, 'ws').replace(/\/?$/, '/ws');
 const other = new WebSocket(wsUrl);
 let joined = false;
+let seq = 0;
 other.addEventListener('message', ev => {
   const m = JSON.parse(ev.data);
-  if (m.t === 'welcome' && !joined) { joined = true; other.send(JSON.stringify({ t: 'pick', team: 0 })); }
+  if (m.t === 'welcome' && !joined) {
+    joined = true;
+    other.send(JSON.stringify({ t: 'pick', team: 0 }));
+    /*
+     * Keep talking. The server drops a player that has said nothing for ten
+     * seconds, and a client that picks a side and then goes quiet is exactly
+     * that. It was dropped mid-check, the room fell back to the lobby, and this
+     * reported that it could not get a match running — a failure of the check,
+     * not of the game. A real client sends an input every tick.
+     */
+    setInterval(() => {
+      seq++;
+      other.send(JSON.stringify({ t: 'input', seq, tick: 0, ax: 0, ay: 0, sh: false, th: false, rt: 0 }));
+    }, 500);
+  }
 });
 await new Promise(r => other.addEventListener('open', r, { once: true }));
 // Long enough for the pick, the five second countdown and the match to start.
