@@ -36,75 +36,90 @@ ENV = pathlib.Path.home() / ".openclaw" / "master.env"
 # seconds and not something to make a player download. 96k stereo is
 # indistinguishable for a sustained ambient bed and is a sixteenth of the size.
 BITRATE = "96k"
-# Quiet on purpose. This is a bed under a game, and the reference point is the
-# shove cue, which a player has to hear over it. -23 LUFS is broadcast-quiet.
-LUFS = -23
-FADE = 2.0
+# -23 was broadcast-quiet and the verdict on it was "too subtle". -18 is still
+# under the effects rather than over them, but it is music you notice.
+LUFS = -18
+# The fade in is short and the fade out is long, which is not symmetry for its
+# own sake. A long fade in at the start of a session is indistinguishable from
+# the music being broken: you press START and nothing appears to happen. A long
+# fade out is what makes the wrap into the next track inaudible.
+FADE_IN = 0.5
+FADE_OUT = 2.5
 
 MODEL = "fal-ai/stable-audio-25/text-to-audio"
 
-# Kept in the same restrained register as the art: a dark planetarium, not a
-# space shooter. Loud music would be competing with the game rather than
-# sitting under it.
+# The first pass at these asked for restraint to match the art, and restraint is
+# what it got: correct, atmospheric, and too subtle to notice. This is a fight
+# over a star between two pantheons, and the music is allowed to say so.
+#
+# What has NOT changed is the ban on vocals. A voice in a bed pulls attention
+# away from what a player needs to be listening to, which here is the shove cue
+# and the countdown.
 COMMON = (
-    "Instrumental only, no vocals, no singing, no choir. "
-    "Slow, spacious, restrained, plenty of air between the notes. "
-    "Mixed quietly, no loud transients, nothing that spikes. "
-    "Begins softly on a sustained note rather than a drum hit. "
-    "Seamless ambient game underscore. "
+    "Instrumental only, no vocals, no singing, no choir, no voices. "
+    "Driving, dramatic, cinematic, epic. A clear steady tempo around 100 BPM. "
+    "Strong rhythm section throughout, powerful percussion. "
+    "Starts immediately with full energy, no slow build, no long intro. "
+    "Heroic and urgent. Video game battle music. "
 )
 
 TRACKS = {
-    # The lobby is heard before anything has happened and while nothing is at
-    # stake, so it is the least eventful thing here: drone, no pulse.
+    # The lobby is the first thing anyone hears, and the job it has is to make
+    # someone want to press START. It gets a pulse and a build, unlike the
+    # first version of it, which was a drone and made the game feel like it had
+    # not loaded yet.
     "lobby-1": {
         "seconds": 95,
         "prompt": COMMON + (
-            "A cold sustained drone under a distant bowed string. A slow "
-            "harp figure repeating every eight bars, very quiet. Deep space "
-            "observatory at night. No drums, no beat, no rhythm at all. "
-            "Minor key, patient, unresolved."
+            "Epic orchestral pre-battle theme. Low taiko drums on a steady "
+            "driving pulse from the first beat. Rising string ostinato, "
+            "urgent and repeating. Brass swells building tension. Deep "
+            "booming hits every four bars. Anticipation before a fight. "
+            "Minor key, powerful, gathering force."
         ),
     },
-    # Norse: skin and iron. Low, slow, wintry. The pulse is a heartbeat rather
-    # than a groove, so it can sit under a fight without driving it.
+    # Norse: skin and iron, and now it hits. War drums rather than a heartbeat.
     "norse-1": {
         "seconds": 110,
         "prompt": COMMON + (
-            "Nordic folk instrumental. A frame drum at a slow heartbeat pulse, "
-            "played softly with a soft beater. A low bowed lyre drone. A "
-            "distant bronze horn holding one long note. Nyckelharpa playing a "
-            "simple modal melody, sparse. Cold, iron, snow, a longhouse at "
-            "night. Minor and modal, no major resolution."
+            "Nordic war music, hard and driving. Huge frame drums and taiko "
+            "hammering a relentless marching rhythm. Aggressive bowed "
+            "tagelharpa riff, low and rough and rhythmic. Blaring bronze war "
+            "horns. Nyckelharpa playing a fast urgent modal melody. Iron, "
+            "snow, a shield wall advancing. Minor and modal, ferocious."
         ),
     },
     "norse-2": {
         "seconds": 110,
         "prompt": COMMON + (
-            "Nordic ritual instrumental. Bowed tagelharpa drone, low and rough. "
-            "A single frame drum striking every four beats. Overtone flute far "
-            "away. Bone rattles, very quiet, occasional. No melody, texture "
-            "only. Bleak, wide, glacial."
+            "Viking battle instrumental, fast and pounding. Thundering war "
+            "drums with heavy accents. Driving bowed lyre riff repeating. "
+            "Stamping rhythm, bone rattles and clashing metal on the beat. "
+            "Low brass stabs. Overtone flute cutting through high above. "
+            "Savage, relentless, triumphant."
         ),
     },
-    # Greek: strings and reed, warmer and more articulate, and it moves. The
-    # two pantheons have to be told apart in three seconds with the game on top.
+    # Greek: bronze and strings rather than skin and iron, and more melodic
+    # than Norse. The two have to be told apart in three seconds with a game
+    # on top of them, so the difference is instrumentation and shape, not tempo.
     "greek-1": {
         "seconds": 110,
         "prompt": COMMON + (
-            "Ancient Greek instrumental. A lyre plucked in a slow modal "
-            "figure, warm and resonant. A soft aulos double reed answering it. "
-            "A struck bronze bowl ringing out every few bars. Marble hall "
-            "reverb. Dorian mode. Warm, golden, older than anything. No drums."
+            "Ancient Greek battle music, grand and heroic. Fast driving "
+            "kithara and lyre arpeggios. Soaring aulos double reed melody, "
+            "bright and piercing. Bronze cymbals and hand drums on a strong "
+            "marching beat. Crashing bronze bowls. Dorian mode, golden, "
+            "triumphant, an army of heroes marching out."
         ),
     },
     "greek-2": {
         "seconds": 110,
         "prompt": COMMON + (
-            "Ancient Greek instrumental. Kithara arpeggios, gentle and even, "
-            "under a long sustained aulos note. Finger cymbals very sparse and "
-            "distant. Sun on stone, an empty temple. Phrygian mode, warm, "
-            "unhurried. No percussion beyond the cymbals."
+            "Epic ancient Greek instrumental, dramatic and urgent. Rapid "
+            "plucked kithara ostinato under a wild aulos melody. Driving "
+            "frame drums and finger cymbals at speed. Bronze gongs on the "
+            "downbeat. Phrygian mode, fierce and bright, gods at war above "
+            "a marble city."
         ),
     },
 }
@@ -188,8 +203,8 @@ def encode(src: pathlib.Path, dest: pathlib.Path, seconds: float) -> None:
     subprocess.run([
         "ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-t", f"{end:.2f}",
         "-af", (f"loudnorm=I={LUFS}:TP=-2:LRA=11,"
-                f"afade=t=in:st=0:d={FADE},"
-                f"afade=t=out:st={max(0.0, end - FADE):.2f}:d={FADE}"),
+                f"afade=t=in:st=0:d={FADE_IN},"
+                f"afade=t=out:st={max(0.0, end - FADE_OUT):.2f}:d={FADE_OUT}"),
         "-c:a", "libmp3lame", "-b:a", BITRATE, "-ac", "2",
         str(dest),
     ], check=True)

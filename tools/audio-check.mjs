@@ -156,7 +156,6 @@ const probe = `(async () => {
   await measure('tether_on',    s => s.tetherAttach(),       0.4);
   await measure('tether_off',   s => s.tetherRelease(),      0.4);
   await measure('star_touch',   s => s.starTouch(1),         0.4);
-  await measure('thrust',       s => s.thrust(1),            0.8);
   await measure('ui_select',    s => s.uiSelect(),           0.4);
   await measure('muted',        s => { s.setMuted(true); s.shove(); }, 0.6);
 
@@ -217,11 +216,84 @@ if (broken.length) {
 
 const total = tracks.reduce((a, t) => a + t.bytes, 0);
 
+// --- the live path ---------------------------------------------------------
+//
+// Everything above runs offline, which proves the effects make sound but says
+// nothing about the page. This part drives the real thing.
+//
+// It exists because of a bug the offline half could never see: the bed was
+// chosen from the server's phase rather than from whether YOU are in the match,
+// so anyone arriving while a game was already running heard match music over
+// the START screen. The assertion is therefore not "some music is playing" but
+// "the LOBBY bed is playing, for someone who has not joined".
+//
+// Which is why a second client joins first. Without it the server sits in
+// 'lobby' for the whole check, both the correct and the broken version of that
+// line agree, and the test passes either way — which is exactly what happened
+// the first time this was written.
+const wsUrl = url.replace(/^http/, 'ws').replace(/\/?$/, '/ws');
+const other = new WebSocket(wsUrl);
+let joined = false;
+other.addEventListener('message', ev => {
+  const m = JSON.parse(ev.data);
+  if (m.t === 'welcome' && !joined) { joined = true; other.send(JSON.stringify({ t: 'pick', team: 0 })); }
+});
+await new Promise(r => other.addEventListener('open', r, { once: true }));
+// Long enough for the pick, the five second countdown and the match to start.
+await sleep(9000);
+
+const phase = await send('Runtime.evaluate', {
+  expression: 'document.getElementById("hud")?.innerText?.match(/phase (\\w+)/)?.[1] ?? "?"',
+  returnByValue: true,
+});
+const serverPhase = phase.result?.result?.value;
+if (serverPhase !== 'playing') {
+  fail(`could not get a match running (server phase "${serverPhase}"), so the lobby assertion would not mean anything`);
+}
+
+// A trusted key event, which counts as the gesture that unlocks audio, and is
+// not one of the keys the lobby uses to join a side.
+for (const type of ['keyDown', 'keyUp']) {
+  await send('Input.dispatchKeyEvent', { type, key: 'x', code: 'KeyX', text: 'x' });
+}
+await sleep(5000);
+
+const live = await send('Runtime.evaluate', {
+  expression: `JSON.stringify({
+    state: window.sound?.ctx?.state ?? null,
+    mode: window.sound?.mode ?? null,
+    lobbyTracks: window.sound?.tracks?.lobby ?? [],
+    playing: (window.sound?.players ?? [])
+      .filter(p => !p.paused)
+      .map(p => ({ src: (p.src || '').split('/').pop(), t: p.currentTime, vol: p.volume })),
+  })`,
+  returnByValue: true,
+});
+const page = JSON.parse(live.result?.result?.value ?? '{}');
+
+if (page.state !== 'running') {
+  fail(`after a real key press the audio context is "${page.state}", so nothing can sound`);
+}
+if (page.mode !== 'lobby') {
+  fail(`with a match running, someone who has not joined is hearing the `
+     + `"${page.mode}" bed instead of the lobby one`);
+}
+const heard = (page.playing ?? []).filter(p => p.t > 0.4 && p.vol > 0.01);
+if (!heard.length) {
+  fail('no track is actually advancing with volume up, so the lobby is silent');
+}
+const lobbyFiles = (page.lobbyTracks ?? []).map(n => `${n}.mp3`);
+if (!heard.some(p => lobbyFiles.includes(p.src))) {
+  fail(`playing ${heard.map(p => p.src).join(', ')}, which is not a lobby track`);
+}
+
 console.log(`audio-check: ${effects.length} effects rendered, all audible, silence clean`);
 console.log(`  loudest ${effects.sort((a, b) => out[b].peak - out[a].peak)[0]}`
   + `   impact scales ${(out.impact_hard.peak / out.impact_soft.peak).toFixed(1)}x soft to hard`);
 console.log(`  music ${tracks.length} tracks, ${(total / 1048576).toFixed(1)} MB`
   + `   (${man.norse.length} norse, ${man.greek.length} greek, ${man.lobby.length} lobby)`);
+console.log(`  live page: context ${page.state}, and with a match running the lobby bed`
+  + ` still plays (${heard[0].src} at ${heard[0].t.toFixed(1)}s, vol ${heard[0].vol.toFixed(2)})`);
 console.log(`  ${called.size} of the class's methods are called by game.mjs`);
 console.log('audio-check: OK');
 process.exit(0);

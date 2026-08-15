@@ -22,8 +22,18 @@
 const MUTE_KEY = 'orrery.muted';
 const VOL_KEY = 'orrery.volume';
 
-/** How long a track spends fading into the next one. */
+/** How long a track spends fading into the next one, mid-playlist. */
 const CROSSFADE = 4.0;
+
+/**
+ * How long the FIRST track takes to reach full volume.
+ *
+ * Short on purpose. A four second fade into the first track of the session is
+ * indistinguishable from the music being broken: you press START, nothing
+ * happens, and by the time it is audible you have stopped waiting for it.
+ * Mid-playlist a long fade is right, because there the point is not noticing.
+ */
+const FADE_IN = 0.35;
 
 /**
  * Effects are mixed against the music, not against nothing. These are the
@@ -31,7 +41,7 @@ const CROSSFADE = 4.0;
  */
 const MIX = {
   master: 0.85,
-  music: 0.34,
+  music: 0.6,
   sfx: 0.85,
 };
 
@@ -63,13 +73,30 @@ export class Sound {
     this.mode = null;             // 'lobby' | 'match'
     this.fadeTimer = null;
 
-    this._thrust = null;          // the thrust loop, built once on unlock
     this._tether = null;
     this._pending = null;         // a mode asked for before the gesture arrived
 
     fetch('music/manifest.json')
       .then(r => (r.ok ? r.json() : null))
-      .then(m => { if (m) this.tracks = { ...this.tracks, ...m }; })
+      .then(m => {
+        if (!m) return;
+        this.tracks = { ...this.tracks, ...m };
+        /*
+         * Buffer the lobby track now, before anyone has pressed anything.
+         *
+         * Setting src and letting the element preload is allowed without a
+         * gesture; only play() is not. Without this the first track starts
+         * downloading at the moment of the click, and a megabyte of MP3 over a
+         * real connection is most of the delay between pressing START and
+         * hearing anything.
+         */
+        const first = this.tracks.lobby[0];
+        if (first) {
+          const el = this.players[1 - this.active];
+          el.src = `music/${first}.mp3`;
+          el.load();
+        }
+      })
       // No music is a degraded game, not a broken one. The effects are
       // synthesised and do not depend on this having worked.
       .catch(() => {});
@@ -77,7 +104,7 @@ export class Sound {
 
   _element() {
     const el = new Audio();
-    el.preload = 'none';
+    el.preload = 'auto';
     el.volume = 0;
     el.crossOrigin = 'anonymous';
     return el;
@@ -115,7 +142,6 @@ export class Sound {
       this.comp.connect(this.master);
       this.master.connect(this.ctx.destination);
 
-      this._buildThrust();
       this._buildTether();
     }
     // An OfflineAudioContext is driven by startRendering, not by resume, and
@@ -137,7 +163,7 @@ export class Sound {
     this.muted = on;
     localStorage.setItem(MUTE_KEY, on ? '1' : '0');
     this._applyVolume();
-    if (on) this.thrust(0);
+    if (on) this.tether(false);
   }
 
   toggleMute() { this.setMuted(!this.muted); return this.muted; }
@@ -189,8 +215,15 @@ export class Sound {
   _startTrack(name, immediate) {
     const next = 1 - this.active;
     const el = this.players[next];
-    el.src = `music/${name}.mp3`;
-    el.currentTime = 0;
+    const want = `music/${name}.mp3`;
+    // Reassigning src throws away whatever was already buffered, which undoes
+    // the preload in the constructor and puts the download back in front of the
+    // first note. Only touch it when it is genuinely a different track.
+    if (!el.src.endsWith(want)) {
+      el.src = want;
+      el.load();
+    }
+    try { el.currentTime = 0; } catch {}
     el.volume = 0;
     const target = (this.muted ? 0 : this.volume) * MIX.music;
 
@@ -203,7 +236,7 @@ export class Sound {
 
     const old = this.players[this.active];
     this.active = next;
-    this._crossfade(old, el, target, immediate ? 1.2 : CROSSFADE);
+    this._crossfade(old, el, target, immediate ? FADE_IN : CROSSFADE);
     this._watchForEnd(el);
   }
 
@@ -263,38 +296,16 @@ export class Sound {
     return src;
   }
 
-  /**
-   * The thrust loop: noise through a lowpass, running always, gated by gain.
+  /*
+   * There is no thrust sound.
    *
-   * Starting and stopping a source per keypress clicks, because a gain that
-   * jumps from zero is a step edge. One permanent source with a ramped gain
-   * does not, and it costs nothing when silent.
+   * There was: filtered noise under a low sine, gated by how hard you were
+   * pushing. It was removed rather than turned down. In a game where you are
+   * thrusting almost continuously it is running almost continuously, so it
+   * stops being a cue and becomes a floor that everything else has to be heard
+   * over — and the things that matter here are the shove, the impact and the
+   * bell. Do not add it back without solving that.
    */
-  _buildThrust() {
-    const src = this._noise();
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 420;
-    filter.Q.value = 0.7;
-
-    const gain = this.ctx.createGain();
-    gain.gain.value = 0;
-
-    // A low sine under the noise. Noise alone reads as wind; the tone is what
-    // makes it read as an engine.
-    const osc = this.ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = 62;
-    const oscGain = this.ctx.createGain();
-    oscGain.gain.value = 0.5;
-
-    src.connect(filter); filter.connect(gain);
-    osc.connect(oscGain); oscGain.connect(gain);
-    gain.connect(this.sfxBus);
-    src.start(); osc.start();
-
-    this._thrust = { gain, filter };
-  }
 
   /** A quiet tone while a tether is attached, so the rope is audible as well as visible. */
   _buildTether() {
@@ -310,18 +321,6 @@ export class Sound {
     osc.connect(filter); filter.connect(gain); gain.connect(this.sfxBus);
     osc.start();
     this._tether = { gain, osc };
-  }
-
-  /** 0 to 1. Called every tick from the input read, so it must be cheap. */
-  thrust(amount) {
-    if (!this.ready || !this._thrust) return;
-    const g = this._thrust.gain.gain;
-    const target = Math.min(1, amount) * 0.16;
-    // A 60ms ramp rather than a jump. Long enough to kill the click, short
-    // enough that the sound still starts when the key does.
-    g.setTargetAtTime(target, this.ctx.currentTime, 0.06);
-    this._thrust.filter.frequency.setTargetAtTime(
-      340 + amount * 260, this.ctx.currentTime, 0.08);
   }
 
   tether(on, tension = 0) {

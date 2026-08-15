@@ -532,13 +532,11 @@ function readKeys() {
 /**
  * Cut the held sounds.
  *
- * Thrust and tether are continuous, so they hold their last value rather than
+ * The tether tone is continuous, so it holds its last value rather than
  * decaying. Anything that stops localTick from running — a match ending, a
- * disconnection, dropping back to the lobby — leaves them sounding forever,
- * which is how the engine ends up running under a game that is not playing.
+ * disconnection, dropping back to the lobby — leaves it sounding forever.
  */
 function silence() {
-  sound.thrust(0);
   sound.tether(false);
   tetherWas = null;
 }
@@ -578,7 +576,6 @@ function localTick() {
   // and history stay aligned with the server and P can be toggled at any moment.
   predictor.advance(tick);
 
-  sound.thrust(Math.hypot(ax, ay));
   if (sh) sound.shove();
 
   /*
@@ -681,10 +678,20 @@ function recordTrails() {
  * state that caused it is still true.
  */
 function soundCues() {
-  // The lobby bed covers the countdown as well. Cutting to the match music the
-  // instant the teams lock, then having nothing happen for five seconds, made
-  // the countdown feel like the round had already started without you.
-  sound.play(phase === 'playing' ? 'match' : 'lobby');
+  /*
+   * The bed follows YOUR situation, not the server's phase.
+   *
+   * It used to key off phase alone, which meant the lobby bed never played at
+   * all: a bot is always mid-match, so the server is in 'playing' while you are
+   * still looking at the START screen, and the first sound of the session was
+   * match music over a menu.
+   *
+   * The lobby bed also covers the countdown. Cutting to the match music the
+   * instant the teams lock, then having nothing happen for five seconds, made
+   * the countdown feel like the round had started without you.
+   */
+  const inTheMatch = myTeam >= 0 && phase === 'playing';
+  sound.play(inTheMatch ? 'match' : 'lobby');
 
   if (score[0] !== scoreWas[0] || score[1] !== scoreWas[1]) {
     // Which side gained one. In the lobby there is no side, so it is somebody

@@ -22,7 +22,6 @@ stretched, so a swing is audible as tension rather than as an on/off tone.
 
 | sound | when | shape |
 | --- | --- | --- |
-| thrust | every tick, gated by input | filtered noise plus a low sine, gain-ramped |
 | shove | your own shove fires | swept noise burst plus a falling sine |
 | tether on/off | the predictor's anchor changes | a short pluck up, a shorter one down |
 | tether tone | while attached | triangle, pitch tracks rope tension |
@@ -32,11 +31,18 @@ stretched, so a swing is audible as tension rather than as an on/off tone.
 | win | a winner appears | the goal bell extended into an arpeggio |
 | countdown | each second before a match | a blip, an octave up on the last one |
 
-Effects fire from two different places on purpose. The ones you cause — thrust,
-shove, tether — come off the local predicted input, so they land on the same
-frame as the key press rather than a round trip later. The ones you observe —
-impacts, goals, the countdown — come off snapshots, because the server decides
-whether they happened.
+Effects fire from two different places on purpose. The ones you cause — shove
+and tether — come off the local predicted input, so they land on the same frame
+as the key press rather than a round trip later. The ones you observe — impacts,
+goals, the countdown — come off snapshots, because the server decides whether
+they happened.
+
+**There is no thrust sound, and that is deliberate.** There was one: filtered
+noise under a low sine, gated by how hard you were pushing. In a game where you
+thrust almost continuously it ran almost continuously, so it stopped being a cue
+and became a floor that the shove, the impacts and the bells all had to be heard
+over. It was removed rather than turned down. Adding it back means solving that
+first.
 
 ## Music is generated ahead of time
 
@@ -44,9 +50,15 @@ A frame drum and a lyre do not come out of an oscillator. Five instrumental beds
 are generated once by `tools/audio/music.py` through fal's Stable Audio, and
 shipped as MP3 in `public/music/` with a manifest the client reads.
 
-- **lobby-1** — a drone, no pulse at all. Heard before anything is at stake.
-- **norse-1, norse-2** — frame drum at a heartbeat, bowed lyre, cold.
-- **greek-1, greek-2** — plucked lyre and aulos, warmer, more articulate.
+- **lobby-1** — taiko and a rising string ostinato. Anticipation before a fight.
+- **norse-1, norse-2** — war drums, bowed tagelharpa riffs, bronze horns.
+- **greek-1, greek-2** — driving kithara, soaring aulos, bronze cymbals.
+
+The first version of all five was restrained, to match the art. It was correct
+and nobody noticed it, which for a game soundtrack is the same as being wrong.
+These are louder, faster and more dramatic, and they start with full energy
+rather than building, because a long build at the start of a session is
+indistinguishable from the music being broken.
 
 During a match the playlist alternates pantheons rather than shuffling, because
 two Norse tracks in a row read as one long track and the point of having both is
@@ -60,9 +72,9 @@ but stops having ideas earlier — norse-1 went quiet with twenty seconds left.
 Trailing quiet is detected and cut so the fade lands on the last real note.
 Quiet passages in the middle are left alone; those are the arrangement.
 
-**It normalises loudness.** Every track is brought to -23 LUFS, which is quiet
-on purpose: this sits under a game whose shove cue has to be audible over it.
-Without this the playlist gets louder and softer as it cycles.
+**It normalises loudness.** Every track is brought to -18 LUFS. Without this the
+playlist gets louder and softer as it cycles. It was -23, which is broadcast
+quiet and sat under the game so well that it went unnoticed.
 
 **It keeps the PCM.** The raw WAVs stay in `tools/audio/raw/`, gitignored at
 ninety megabytes. `tools/audio/reencode.py` rebuilds every MP3 from them, so
