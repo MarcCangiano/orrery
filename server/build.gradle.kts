@@ -33,3 +33,17 @@ tasks.test {
         events("passed", "failed", "skipped")
     }
 }
+
+/**
+ * Prints the drift fixture: the real simulation run over a scripted input
+ * sequence, one line of state per tick. tools/drift-check.sh feeds this to the
+ * JavaScript implementation and compares.
+ */
+tasks.register<JavaExec>("driftFixture") {
+    group = "verification"
+    description = "Print the physics fixture the JS simulation is checked against"
+    mainClass = "dev.cangiano.orrery.sim.DriftFixture"
+    classpath = sourceSets["main"].runtimeClasspath
+    // Gradle's own logging would land in the middle of the JSON otherwise.
+    standardOutput = System.out
+}

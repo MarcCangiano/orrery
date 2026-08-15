@@ -30,18 +30,31 @@ public final class Messages {
     public record Input(
             @JsonProperty("t") String t,
             @JsonProperty("seq") long seq,
+            @JsonProperty("tick") long tick,
             @JsonProperty("ax") double ax,
             @JsonProperty("ay") double ay) {}
 
-    /** Server's answer to a join: who you are and how big the world is. */
+    /**
+     * Server's answer to a join: who you are, how big the world is, and every
+     * constant its physics uses.
+     *
+     * <p>The constants are on the wire deliberately. The client re-runs the same
+     * simulation to predict, and the fastest way to a bug nobody can reproduce
+     * is a client built against a thrust value the server changed last week.
+     * There is one source of truth and it is the server.
+     */
     public record Welcome(
             @JsonProperty("t") String t,
             @JsonProperty("id") int id,
             @JsonProperty("w") double w,
             @JsonProperty("h") double h,
-            @JsonProperty("hz") int hz) {
-        public static Welcome of(int id, double w, double h, int hz) {
-            return new Welcome("welcome", id, w, h, hz);
+            @JsonProperty("hz") int hz,
+            @JsonProperty("thrust") double thrust,
+            @JsonProperty("maxSpeed") double maxSpeed,
+            @JsonProperty("restitution") double restitution) {
+        public static Welcome of(int id, double w, double h, int hz,
+                double thrust, double maxSpeed, double restitution) {
+            return new Welcome("welcome", id, w, h, hz, thrust, maxSpeed, restitution);
         }
     }
 
@@ -54,14 +67,23 @@ public final class Messages {
             @JsonProperty("vy") double vy,
             @JsonProperty("r") double r) {}
 
-    /** The world as the server sees it, which is the only version that counts. */
+    /**
+     * The world as the server sees it, which is the only version that counts.
+     *
+     * <p>{@code tick} is the tick this state is the result of, and it is what
+     * the client replays forward from. {@code ack} is the newest input sequence
+     * the server has actually applied, used only to measure round trip.
+     * {@code missed} counts inputs that arrived too late to be used, which is
+     * the number that explains a client feeling snappy or not.
+     */
     public record Snapshot(
             @JsonProperty("t") String t,
             @JsonProperty("tick") long tick,
             @JsonProperty("ack") long ack,
+            @JsonProperty("missed") long missed,
             @JsonProperty("bodies") List<BodyState> bodies) {
-        public static Snapshot of(long tick, long ack, List<BodyState> bodies) {
-            return new Snapshot("state", tick, ack, bodies);
+        public static Snapshot of(long tick, long ack, long missed, List<BodyState> bodies) {
+            return new Snapshot("state", tick, ack, missed, bodies);
         }
     }
 }

@@ -94,12 +94,26 @@ class GameServerIntegrationTest {
         assertTrue(myId > 0);
         assertTrue(welcome.get("w").asDouble() > 0, "welcome must describe the arena");
 
-        // Thrust right for about half a second of wall clock.
-        for (int i = 1; i <= 30; i++) {
-            ws.sendText("{\"t\":\"input\",\"seq\":" + i + ",\"ax\":1,\"ay\":0}", true).get();
-            Thread.sleep(16);
+        // Inputs are addressed to a server tick, so the test has to aim ahead of
+        // the server the same way a real client does. It learns the current tick
+        // from a snapshot and fills the next stretch of ticks with the same
+        // intent, which covers whatever the server reaches while these are in
+        // flight.
+        assertNotNull(awaitSnapshot(collector), "no snapshot arrived to take a tick from");
+
+        long seq = 0;
+        for (int round = 0; round < 6; round++) {
+            JsonNode latest = lastMatching(collector, "state");
+            assertNotNull(latest, "no snapshot to take the tick from");
+            long from = latest.get("tick").asLong() + 2;
+            for (long tick = from; tick < from + 12; tick++) {
+                seq++;
+                ws.sendText("{\"t\":\"input\",\"seq\":" + seq + ",\"tick\":" + tick
+                        + ",\"ax\":1,\"ay\":0}", true).get();
+            }
+            Thread.sleep(120);
         }
-        Thread.sleep(300); // let the snapshots catch up
+        Thread.sleep(200); // let the snapshots catch up
 
         JsonNode last = lastMatching(collector, "state");
         assertNotNull(last, "no snapshots arrived");
@@ -115,6 +129,7 @@ class GameServerIntegrationTest {
                 "thrusting right should build real velocity, was " + me.get("vx"));
         assertEquals(0.0, me.get("vy").asDouble(), 1e-9, "and should not drift on the other axis");
         assertTrue(last.get("ack").asLong() > 0, "server must echo the input sequence it consumed");
+        assertTrue(last.has("missed"), "snapshots must report inputs that arrived too late");
 
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").get(2, TimeUnit.SECONDS);
     }
@@ -142,6 +157,19 @@ class GameServerIntegrationTest {
         JsonNode snapshot = lastMatching(two, "state");
         assertNotNull(snapshot);
         assertEquals(2, snapshot.get("bodies").size(), "both players should be in the world");
+    }
+
+    /** Snapshots start 16ms after connect, so a test that reads one immediately loses the race. */
+    private JsonNode awaitSnapshot(Collector c) throws Exception {
+        long deadline = System.nanoTime() + 3_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            JsonNode n = lastMatching(c, "state");
+            if (n != null) {
+                return n;
+            }
+            Thread.sleep(20);
+        }
+        return null;
     }
 
     private JsonNode firstMatching(Collector c, String type) throws Exception {

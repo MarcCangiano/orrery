@@ -36,9 +36,18 @@ public final class Body {
         vy += (fy / mass) * dt;
     }
 
-    /** Speed in world units per second. */
+    /**
+     * Speed in world units per second.
+     *
+     * <p>Deliberately {@code sqrt(vx*vx + vy*vy)} rather than {@code Math.hypot}.
+     * Hypot is the better function: it avoids overflow and is correctly rounded
+     * here. It is also specified differently in Java and in JavaScript, and the
+     * browser runs this same simulation to predict. Two implementations that
+     * disagree in the last bit diverge slowly, which is the worst kind of bug to
+     * find. Speeds here are small enough that overflow is not a real concern.
+     */
     public double speed() {
-        return Math.hypot(vx, vy);
+        return Math.sqrt(vx * vx + vy * vy);
     }
 
     /**

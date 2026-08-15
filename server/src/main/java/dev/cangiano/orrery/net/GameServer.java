@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -21,13 +22,22 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>That single-threaded core is deliberate. Physics that several threads can
  * mutate is physics that stops being reproducible, and reproducibility is the
  * one property client prediction cannot do without. Network callbacks arrive on
- * Jetty's threads, drop their intent into a concurrent map, and leave. The tick
- * thread reads that map and is the only thing that ever writes to the world.
+ * Jetty's threads, drop their intent into a queue, and leave. The tick thread
+ * reads those queues and is the only thing that ever writes to the world.
  *
- * <p>No prediction yet on purpose. Right now the client draws exactly what the
- * server last said, so movement lags by a round trip and feels bad. That is the
- * honest baseline: the next commit makes it feel good, and you can only tell it
- * worked if you know what it felt like before.
+ * <p><b>Inputs are addressed to a tick, not to a queue.</b> Two earlier versions
+ * got this wrong. The first kept only the latest input and applied whatever had
+ * arrived by tick time. The second queued them and consumed one per tick. Both
+ * fail the same way: the client predicts one step per input it sends, the server
+ * runs one step per tick, and those are two independent clocks. Over a second
+ * they disagree by a tick or so, which measured as a mean prediction error of
+ * 0.42 world units, roughly a quarter of a body, permanently.
+ *
+ * <p>Now a client stamps each input with the tick it is meant for, aiming a
+ * couple of ticks into the server's future. At tick T the server applies the
+ * input addressed to T, or holds the last one if nothing arrived in time. Both
+ * sides now agree on exactly which inputs affected which ticks, so a replay on
+ * the client reproduces the server's arithmetic instead of approximating it.
  */
 public final class GameServer {
 
@@ -39,6 +49,13 @@ public final class GameServer {
 
     /** Thruster force. Tuned by feel later, once there is feel to tune. */
     public static final double THRUST = 60.0;
+
+    /**
+     * Ring buffer of pending inputs, indexed by tick. Four seconds at 60Hz.
+     * A ring rather than a growable map because a client cannot make the server
+     * allocate by sending inputs addressed to the year 3000.
+     */
+    private static final int INPUT_RING = 256;
 
     private static final double ARENA_W = 120;
     private static final double ARENA_H = 70;
@@ -54,12 +71,18 @@ public final class GameServer {
     private Thread simThread;
     private volatile boolean running;
 
+    /** One intent from a client, addressed to a specific server tick. */
+    private record Command(long seq, long tick, double ax, double ay) {}
+
     /** What the server knows about one connection. */
     private static final class Player {
         final int id;
-        volatile double ax;
-        volatile double ay;
-        volatile long lastSeq;
+        /** Written by network threads, read by the sim thread. Slot is tick % INPUT_RING. */
+        final AtomicReferenceArray<Command> ring = new AtomicReferenceArray<>(INPUT_RING);
+        // Only the sim thread touches these.
+        Command lastApplied = new Command(0, 0, 0, 0);
+        volatile long ack;
+        volatile long missed;
 
         Player(int id) {
             this.id = id;
@@ -67,7 +90,8 @@ public final class GameServer {
     }
 
     public void start(int port) {
-        app = Javalin.create(cfg -> cfg.staticFiles.add("/public", io.javalin.http.staticfiles.Location.CLASSPATH));
+        app = Javalin.create(cfg -> cfg.staticFiles.add("/public",
+                io.javalin.http.staticfiles.Location.CLASSPATH));
 
         app.ws("/ws", ws -> {
             ws.onConnect(ctx -> {
@@ -75,15 +99,14 @@ public final class GameServer {
                 Player p = new Player(id);
                 players.put(ctx, p);
 
-                // Spawn somewhere that isn't the middle, so two players don't
-                // start inside each other.
-                double x = ARENA_W * (0.25 + 0.5 * ((id % 2)));
+                double x = ARENA_W * (0.25 + 0.5 * (id % 2));
                 double y = ARENA_H * 0.5;
                 synchronized (world) {
                     world.add(new Body(id, x, y, PLAYER_RADIUS, PLAYER_MASS));
                 }
 
-                ctx.send(write(Messages.Welcome.of(id, ARENA_W, ARENA_H, TICK_HZ)));
+                ctx.send(write(Messages.Welcome.of(id, ARENA_W, ARENA_H, TICK_HZ,
+                        THRUST, World.MAX_SPEED, World.WALL_RESTITUTION)));
                 System.out.printf("player %d connected (%d online)%n", id, players.size());
             });
 
@@ -96,10 +119,14 @@ public final class GameServer {
                 if (!"input".equals(node.path("t").asText())) {
                     return;
                 }
+                long forTick = node.path("tick").asLong(0);
                 // Clamp rather than trust. A client is free to send ax=1e9.
-                p.ax = clamp(node.path("ax").asDouble(0), -1, 1);
-                p.ay = clamp(node.path("ay").asDouble(0), -1, 1);
-                p.lastSeq = node.path("seq").asLong(0);
+                Command c = new Command(
+                        node.path("seq").asLong(0),
+                        forTick,
+                        clamp(node.path("ax").asDouble(0), -1, 1),
+                        clamp(node.path("ay").asDouble(0), -1, 1));
+                p.ring.set((int) Math.floorMod(forTick, INPUT_RING), c);
             });
 
             ws.onClose(ctx -> removePlayer(ctx));
@@ -136,9 +163,22 @@ public final class GameServer {
             loop.advance((tick, dt) -> {
                 synchronized (world) {
                     for (Player p : players.values()) {
+                        int slot = (int) Math.floorMod(tick, INPUT_RING);
+                        Command c = p.ring.get(slot);
+                        if (c != null && c.tick() == tick) {
+                            p.lastApplied = c;
+                            p.ack = c.seq();
+                            p.ring.set(slot, null);
+                        } else if (c == null) {
+                            // Nothing addressed to this tick arrived in time.
+                            // Hold the last intent: a dropped packet should read
+                            // as a stutter, not as the thruster cutting out.
+                            p.missed++;
+                        }
                         Body b = world.byId(p.id);
                         if (b != null) {
-                            b.applyForce(p.ax * THRUST, p.ay * THRUST, dt);
+                            b.applyForce(p.lastApplied.ax() * THRUST,
+                                    p.lastApplied.ay() * THRUST, dt);
                         }
                     }
                     world.step(dt);
@@ -169,22 +209,17 @@ public final class GameServer {
         synchronized (world) {
             states = new ArrayList<>(world.bodies().size());
             for (Body b : world.bodies()) {
-                states.add(new Messages.BodyState(b.id, round(b.x), round(b.y),
-                        round(b.vx), round(b.vy), b.radius));
+                states.add(new Messages.BodyState(b.id, b.x, b.y, b.vx, b.vy, b.radius));
             }
         }
         // Each client gets its own frame, because ack is per client.
         for (Map.Entry<WsContext, Player> e : players.entrySet()) {
             WsContext ctx = e.getKey();
             if (ctx.session.isOpen()) {
-                ctx.send(write(Messages.Snapshot.of(tick, e.getValue().lastSeq, states)));
+                Player p = e.getValue();
+                ctx.send(write(Messages.Snapshot.of(tick, p.ack, p.missed, states)));
             }
         }
-    }
-
-    /** Two decimals is under a tenth of a player radius and cuts the frame size hard. */
-    private static double round(double v) {
-        return Math.round(v * 100.0) / 100.0;
     }
 
     private static double clamp(double v, double lo, double hi) {

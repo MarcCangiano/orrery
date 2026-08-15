@@ -63,13 +63,33 @@ Two reasons, in order:
 - [x] Client connects, sends input, renders server state
 - [x] Physics: bodies, thrust, walls, restitution, speed cap. Collisions between
       bodies NOT done yet
-- [ ] Client prediction and reconciliation
-- [ ] Debug tooling: lag simulator, predicted-vs-authoritative overlay
+- [x] Client prediction and reconciliation (measured at 0.000000 units of error)
+- [x] Debug tooling: lag simulator (L), server ghost (G), prediction toggle (P)
+- [x] Interpolation for other players, 80ms behind
 - [ ] Tether
 - [ ] The star, the jaws, scoring, match flow
 - [ ] Interest management
 - [ ] Lag-compensated shove
 - [ ] Deploy: server on a box, client on Pages
+
+## How the clock works, because it is the non-obvious part
+
+The server applies the input addressed to each tick. The client therefore runs
+its own tick counter AHEAD of the server's by about one-way latency plus two
+ticks of margin, and addresses inputs to that future tick. Snapshots carry the
+server's tick, so the estimate is nudged one tick at a time when close and
+snapped when hopeless, such as after a background tab.
+
+Two rules fell out of measuring, both in `predictor.mjs`:
+
+1. **Simulate every tick, not every input.** The server steps on every tick,
+   holding the last intent when nothing arrived. A client that only steps the
+   ticks it has inputs for runs fewer steps and drifts. Measured at 1.95 units
+   of mean error before the fix.
+2. **Compare like with like.** The client is deliberately ahead, so comparing
+   "where I am now" against "where the server says I am" reports the lead as
+   error. The predictor keeps its own history and compares against the state it
+   predicted for that same tick.
 
 ## Known issues
 
@@ -84,18 +104,25 @@ Two reasons, in order:
     ./gradlew :server:test     # 8 tests
     ./gradlew :server:run      # 3 seconds of loop, prints achieved rate
 
+## Verifying
+
+    ./verify.sh
+
+Runs the tests, the Java-versus-JavaScript drift check, and a headless client
+that plays for six seconds against a real server and measures its own prediction
+error. All three must pass. The last two are the ones that catch netcode bugs;
+the unit tests never will.
+
 ## Next action
 
-Prediction. The client currently draws the past and it feels like it. Next:
-keep a ring buffer of unacknowledged inputs, run the same physics locally the
-moment a key is pressed, and on each snapshot rewind to the server's position
-and replay the inputs it hadn't seen yet.
+Body-to-body collisions. This is the first thing that makes prediction hard for
+real: right now nothing you predict depends on anyone else, so a replay only
+ever involves your own inputs. Once two bodies can hit each other, the client is
+predicting something it does not have complete information about, and the
+correction becomes visible.
 
-That requires the JavaScript simulation to match `World.step` exactly, which is
-the reason `World` has no wall clock, no randomness and no hash iteration in it.
-Build the drift test at the same time: run both simulations over identical
-inputs and assert they agree, or the divergence will be found later as "it feels
-weird sometimes".
+Expect the honest answer to be that you do NOT predict collisions with other
+players, only with walls and the star, and let the server settle player contact.
+Measure it before deciding.
 
-Also worth doing soon, in rough order: body-to-body collisions, then the tether,
-then interpolation for other players.
+After that, in rough order: the star, the jaws, scoring, then the tether.
