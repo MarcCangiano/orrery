@@ -128,6 +128,8 @@ public final class GameServer {
         volatile long missed;
         /** The tick this player may shove again. Only the sim thread writes it. */
         volatile long shoveReadyTick;
+        /** When anything was last heard from this socket. */
+        volatile long lastSeenNanos = System.nanoTime();
         /** Anchor this player is roped to, or null. Sim thread only. */
         Body anchor;
         double tetherLength;
@@ -172,6 +174,7 @@ public final class GameServer {
                 if (p == null) {
                     return;
                 }
+                p.lastSeenNanos = System.nanoTime();
                 JsonNode node = json.readTree(ctx.message());
                 String type = node.path("t").asText();
 
@@ -363,6 +366,37 @@ public final class GameServer {
         simThread.start();
     }
 
+    /**
+     * Drop players who have gone quiet.
+     *
+     * <p>A socket does not always close politely. A tab that is killed, a
+     * machine that sleeps, a network that vanishes: the server keeps the
+     * connection, keeps the body, and an abandoned god stands in the middle of
+     * the arena forever. That is the third player nobody could account for.
+     *
+     * <p>Only applied to players who have taken a side, because they are the
+     * ones sending sixty inputs a second. Somebody sitting in the lobby is
+     * silent by design and costs nothing but a socket.
+     */
+    private void dropSilentPlayers() {
+        long now = System.nanoTime();
+        for (Map.Entry<WsContext, Player> e : players.entrySet()) {
+            Player p = e.getValue();
+            if (p.team < 0) {
+                continue;
+            }
+            if (now - p.lastSeenNanos > 10_000_000_000L) {
+                System.out.printf("player %d silent for 10s, dropping%n", p.id);
+                removePlayer(e.getKey());
+                try {
+                    e.getKey().closeSession();
+                } catch (Exception ignored) {
+                    // Already gone, which is the usual reason we are here.
+                }
+            }
+        }
+    }
+
     private void simulationLoop() {
         FixedTickLoop loop = new FixedTickLoop(TICK_HZ, 5, TimeSource.SYSTEM);
         long lastReport = System.nanoTime();
@@ -513,6 +547,9 @@ public final class GameServer {
                 }
                 if (tick % SNAPSHOT_EVERY == 0) {
                     broadcast(tick);
+                }
+                if (tick % TICK_HZ == 0) {
+                    dropSilentPlayers();
                 }
             });
 

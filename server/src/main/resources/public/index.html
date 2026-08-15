@@ -45,6 +45,16 @@
   .sides button.norse:hover { border-color: #7fa8e3; color: #7fa8e3; }
   .sides button.greek:hover { border-color: #e0b062; color: #e0b062; }
   .count { font-size: 12px; color: #7c8798; margin-top: 10px; letter-spacing: 1px; }
+  /* Goals and match wins, in the DOM so both renderers show them. They used to
+     be painted onto the 2D canvas, which meant the 3D view announced nothing at
+     all: the world simply stopped for a second and a half with no explanation,
+     and a match ending looked exactly like the game breaking. */
+  #banner { position: fixed; inset: 0; display: grid; place-items: center;
+            pointer-events: none; text-align: center; opacity: 0; transition: opacity .2s; }
+  #banner.show { opacity: 1; }
+  #banner .big { font-size: 64px; letter-spacing: 12px; font-weight: 300;
+                 color: #ffe9b0; text-shadow: 0 0 40px rgba(255,196,90,.45); }
+  #banner .sub { margin-top: 10px; color: #cfd6e4; letter-spacing: 2px; }
   #countdown { font-size: 96px; font-weight: 200; color: #ffe9b0;
                text-shadow: 0 0 40px rgba(255,196,90,.4); }
   .hint { color: #7c8798; font-size: 12px; margin-top: 26px; letter-spacing: .5px; }
@@ -59,6 +69,7 @@
 <canvas id="c"></canvas>
 <div id="score"></div>
 <div id="hud"></div>
+<div id="banner"><div><div class="big"></div><div class="sub"></div></div></div>
 <div id="overlay"><div id="panel"></div></div>
 <script type="module" src="./game.mjs"></script>
 </body>

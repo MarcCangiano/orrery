@@ -266,6 +266,61 @@ class GameServerIntegrationTest {
                 "the round must keep running for whoever is still here");
     }
 
+    @Test
+    void aBodyIsNotLeftBehindWhenTheSocketClosesWithoutWarning() throws Exception {
+        int port = freePort();
+        server = new GameServer();
+        server.start(port);
+
+        Collector watcher = new Collector();
+        WebSocket wsWatcher = HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws"), watcher)
+                .get(5, TimeUnit.SECONDS);
+        assertTrue(watcher.welcomed.await(5, TimeUnit.SECONDS));
+        wsWatcher.sendText("{\"t\":\"pick\",\"team\":0}", true).get();
+
+        Collector ghost = new Collector();
+        WebSocket wsGhost = HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create("ws://localhost:" + port + "/ws"), ghost)
+                .get(5, TimeUnit.SECONDS);
+        assertTrue(ghost.welcomed.await(5, TimeUnit.SECONDS));
+        wsGhost.sendText("{\"t\":\"pick\",\"team\":1}", true).get();
+        Thread.sleep(500);
+
+        int ghostId = firstMatching(ghost, "welcome").get("id").asInt();
+        JsonNode before = lastMatching(watcher, "state");
+        assertTrue(hasBody(before, ghostId), "the second player should be on the pitch");
+
+        // Abandon the second connection without closing it: no close frame, no
+        // goodbye, exactly what a killed tab or a sleeping laptop does.
+        wsGhost.abort();
+
+        // The server gives a quiet player ten seconds before dropping them.
+        // Watch for THAT id leaving, not for the player count dropping: a bot
+        // takes the empty side the moment it opens up, so the count goes
+        // straight back to two and says nothing about the abandoned body.
+        boolean gone = false;
+        long deadline = System.nanoTime() + 20_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            JsonNode snap = lastMatching(watcher, "state");
+            if (snap != null && !hasBody(snap, ghostId)) {
+                gone = true;
+                break;
+            }
+            Thread.sleep(250);
+        }
+        assertTrue(gone, "an abandoned body must not stand in the arena forever");
+    }
+
+    private boolean hasBody(JsonNode snapshot, int id) {
+        for (JsonNode b : snapshot.get("bodies")) {
+            if (b.get("id").asInt() == id) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Waits out the five second countdown, during which nothing moves by design. */
     private void awaitPlaying(Collector c) throws Exception {
         long deadline = System.nanoTime() + 12_000_000_000L;

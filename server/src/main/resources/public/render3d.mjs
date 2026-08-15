@@ -605,10 +605,16 @@ export class Renderer3D {
         targetX = anchor.x * 0.6 + other.x * 0.4;
         targetY = this.mapY(anchor.y * 0.6 + other.y * 0.4);
 
-        const apart = me && star ? Math.hypot(me.x - star.x, me.y - star.y) : 30;
-        // Close when you are on the star, wide when it is across the arena.
-        const t = Math.min(Math.max((apart - 8) / 55, 0), 1);
-        height = h * (1.05 + t * 1.15);
+        /*
+         * One fixed height, deliberately.
+         *
+         * The first version pulled back as you and the star separated, which is
+         * what a camera "should" do and was horrible to play under: the zoom
+         * moved constantly, so nothing on screen held a steady size and the eye
+         * never settled. A game like this needs a stable scale far more than it
+         * needs a clever one. The camera follows; it does not breathe.
+         */
+        height = h * 1.35;
 
         // Never look outside the cage. Half the visible width at this height,
         // roughly, is what has to stay inside.

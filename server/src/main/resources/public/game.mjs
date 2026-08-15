@@ -47,6 +47,7 @@ const ctx = canvas.getContext('2d');
 const hud = document.getElementById('hud');
 const scoreboard = document.getElementById('score');
 const overlay = document.getElementById('overlay');
+const banner = document.getElementById('banner');
 const panel = document.getElementById('panel');
 
 // Other players used to be drawn from interpolated snapshots, roughly 80ms in
@@ -83,6 +84,7 @@ const cfg = {
 const STAR_ID = -1;
 const TEAM_COLOR = ['#7fa8e3', '#e0b062'];   // Norse frost, Greek gold
 const TEAM_NAME = ['Norse', 'Greek'];
+const GOALS_TO_WIN = 5;
 
 let myId = null;
 let predictor = null;
@@ -120,7 +122,10 @@ let worstCorrection = 0;
 let replayedLast = 0;
 
 let predictionOn = true;
-let ghostOn = true;
+// The server's version of your body, drawn as a wireframe sphere. It is a
+// debugging instrument, not scenery, and with a god standing in the ring it
+// reads as a ball trailing the player around. Off unless asked for, with G.
+let ghostOn = false;
 let fakeLagMs = 0;
 
 const keys = new Set();
@@ -404,6 +409,33 @@ function renderOverlay() {
     `<div class="hint">click a side, or press ENTER or SPACE to take the emptier one</div>`;
   for (const b of panel.querySelectorAll('[data-team]')) {
     if (!b.disabled) b.onclick = () => pickSide(Number(b.dataset.team));
+  }
+}
+
+/**
+ * Says what just happened and what happens next.
+ *
+ * <p>There is no clock in this game and never has been: a match ends when
+ * somebody reaches five. Without this, in the 3D view, that ending was silent.
+ * The world froze for four seconds and started again with the score wiped,
+ * which reads as the round stopping for no reason.
+ */
+function renderBanner() {
+  const on = freeze > 0 && phase !== 'countdown';
+  banner.classList.toggle('show', on);
+  if (!on) return;
+
+  const big = banner.querySelector('.big');
+  const sub = banner.querySelector('.sub');
+  if (winner >= 0) {
+    big.textContent = `${TEAM_NAME[winner].toUpperCase()} WIN`;
+    big.style.color = TEAM_COLOR[winner];
+    sub.textContent = `${score[0]} to ${score[1]}  ·  new match in ` +
+      Math.max(1, Math.ceil(freeze / cfg.hz));
+  } else {
+    big.textContent = 'GOAL';
+    big.style.color = '#ffe9b0';
+    sub.textContent = `${score[0]} · ${score[1]}   first to ${GOALS_TO_WIN}`;
   }
 }
 
@@ -850,21 +882,6 @@ function draw(now) {
     ctx.stroke();
   }
 
-  if (freeze > 0) {
-    ctx.setTransform(scale, 0, 0, scale, ox, oy);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const big = winner >= 0 ? `${TEAM_NAME[winner].toUpperCase()} WIN` : 'GOAL';
-    ctx.font = `600 ${winner >= 0 ? 9 : 11}px ui-monospace, Menlo, monospace`;
-    // Fades as the pause runs out, so the world coming back to life is visible
-    // rather than sudden.
-    const span = winner >= 0 ? 240 : 90;
-    ctx.globalAlpha = Math.min(1, freeze / (span * 0.5));
-    ctx.fillStyle = winner >= 0 ? TEAM_COLOR[winner] : '#ffe9b0';
-    ctx.fillText(big, cfg.w / 2, cfg.h / 2);
-    ctx.globalAlpha = 1;
-  }
-
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawHud();
 }
@@ -879,6 +896,7 @@ function draw(now) {
  */
 function drawHud() {
   renderOverlay();
+  renderBanner();
 
   hud.innerHTML =
     `orrery  <b>you are ${myId ?? '...'}</b> ` +
@@ -898,7 +916,9 @@ function drawHud() {
   scoreboard.innerHTML =
     `<span class="norse">NORSE <b>${score[0]}</b></span>` +
     `<span style="opacity:.4">   ·   </span>` +
-    `<span class="greek"><b>${score[1]}</b> GREEK</span>`;
+    `<span class="greek"><b>${score[1]}</b> GREEK</span>` +
+    `<div style="font-size:11px;letter-spacing:2px;color:#7c8798;margin-top:2px">` +
+      `FIRST TO ${GOALS_TO_WIN}</div>`;
 }
 
 
