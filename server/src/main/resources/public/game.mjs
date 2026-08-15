@@ -354,9 +354,23 @@ function handle(raw) {
     targetTick = target;
   }
 
+  /*
+   * Reconcile even when the snapshot has no body for us.
+   *
+   * It used to return here instead, which looked harmless: with no body there
+   * is nothing to correct. But reconcile also mirrors the world, and skipping
+   * it meant a client with no body stopped receiving the arena entirely and
+   * ran its local copy forward on its own from the last state it had. Twelve
+   * seconds after pressing ESC the star had drifted out of the arena, taking
+   * the only light in the scene with it, and the two draw-offset passes below
+   * had gone unbalanced for four hundred snapshots.
+   *
+   * predictor.reconcile already handles a missing body correctly — it syncs the
+   * world first and only then gives up — so this guard was defeating a fix that
+   * was already there.
+   */
   const truth = m.bodies.find(b => b.id === myId);
-  if (!truth) return;
-  serverMe = truth;
+  serverMe = truth ?? null;
 
   // The predictor compares the truth against what IT had predicted for that same
   // tick, not against where we are now. We are deliberately ahead of the server,
@@ -531,6 +545,11 @@ function leaveMatch() {
   silence();
   sound.uiMove();
   send({ t: 'leave' });
+  // Drop the smoothing state with the body. These offsets exist to slide a
+  // correction over a few frames; carried across a hand-off they are a few
+  // frames of everything sitting in the wrong place for no reason.
+  drawOffset.clear();
+  trails.clear();
   renderOverlay();
 }
 
@@ -590,8 +609,22 @@ function silence() {
  */
 function localTick() {
   if (myId === null || !haveClock || !predictor) { silence(); return; }
-  // No body, no inputs. A player in the lobby is a spectator.
-  if (myTeam < 0) { silence(); return; }
+  /*
+   * No body, no inputs. A player in the lobby is a spectator.
+   *
+   * The clock still has to follow the server, though. This used to just stop,
+   * so predTick froze while the server's kept climbing and the HUD's lead went
+   * negative — a client claiming to be behind the server, which is the one
+   * thing this design says cannot happen. It only ever corrected itself by
+   * blowing past RESYNC_THRESHOLD and snapping, and then the first tick after
+   * rejoining was addressed to a tick the server had already simulated.
+   */
+  if (myTeam < 0) {
+    silence();
+    predTick = targetTick;
+    predictor.tick = targetTick;
+    return;
+  }
   const tick = ++predTick;
   let { ax, ay } = readKeys();
   // One shove per press, not one per tick the bar is held down.

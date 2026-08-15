@@ -155,6 +155,58 @@ def submit(payload: dict, headers: dict, label: str) -> dict:
     raise TimeoutError(f"{label}: still queued after ten minutes")
 
 
+def envelope(src: pathlib.Path, window: float = 0.5) -> list:
+    """Loudness per window, straight off the PCM.
+
+    Everything about where a track starts and stops is decided from this. Doing
+    it with ffmpeg's silencedetect works for the tail, where the question is
+    "has it stopped", but not for the head, where the question is "has it got
+    going yet" — and an intro is rarely silent, it is just thin.
+    """
+    with wave.open(str(src), "rb") as w:
+        width, rate, frames = w.getsampwidth(), w.getframerate(), w.getnframes()
+        step = int(rate * window)
+        levels = []
+        read = 0
+        while read < frames:
+            chunk = w.readframes(min(step, frames - read))
+            if not chunk:
+                break
+            read += step
+            levels.append(audioop.rms(chunk, width))
+    return levels
+
+
+def content_start(src: pathlib.Path, window: float = 0.5) -> float:
+    """Where the track is actually up and running.
+
+    The verdict on the first cut of these was that they take too long to build.
+    They do: the model likes an intro, and an intro is exactly the wrong shape
+    for a bed that begins the moment you press START. So the quiet run-up is cut
+    and the track starts where it is already at full strength.
+
+    Full strength is measured as a fraction of the track's own busy level rather
+    than an absolute, because these are normalised later and the numbers here
+    are arbitrary until then. The sustain requirement matters: without it the
+    start lands on the first loud hit of a sparse intro rather than on the point
+    where the music is continuously going.
+    """
+    levels = envelope(src, window)
+    if not levels:
+        return 0.0
+    busy = sorted(levels)[int(len(levels) * 0.75)]
+    if busy <= 0:
+        return 0.0
+
+    need = busy * 0.6
+    hold = busy * 0.45
+    for i in range(len(levels) - 4):
+        if levels[i] >= need and all(v >= hold for v in levels[i + 1:i + 5]):
+            # Back off half a window so the first beat is not clipped off.
+            return max(0.0, (i * window) - window / 2)
+    return 0.0
+
+
 def content_end(src: pathlib.Path, seconds: float) -> float:
     """Where the music actually stops, which is not where the file stops.
 
