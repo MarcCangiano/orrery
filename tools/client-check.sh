@@ -57,17 +57,26 @@ run_chrome() {
   wait "$pid" 2>/dev/null || true
 }
 
+# Judge only after every attempt. An earlier version asserted inside the loop
+# and so failed on the first empty dump, which turned a busy machine into a
+# reported product failure.
 dom=""
-for attempt in 1 2; do
+rendered=no
+for attempt in 1 2 3; do
   run_chrome $((6000 + attempt * 3000)) "$profile_root/dom-$attempt.html" "$profile_root/$attempt"
-  dom=$(cat "$profile_root/dom-$attempt.html" 2>/dev/null || true)
-  echo "$dom" | grep -q 'WASD thrust' \
-    || fail "the HUD never rendered, so the draw loop threw on its first frame"
-  if echo "$dom" | grep -qE 'you are <b>[0-9]+'; then
-    connected=yes
-    break
+  this=$(cat "$profile_root/dom-$attempt.html" 2>/dev/null || true)
+  [ -n "$this" ] && dom="$this"
+  if echo "$this" | grep -q 'WASD thrust'; then
+    rendered=yes
+    if echo "$this" | grep -qE 'you are <b>[0-9]+'; then
+      connected=yes
+      break
+    fi
   fi
 done
+
+[ "$rendered" = "yes" ] \
+  || fail "the HUD never rendered in 3 attempts, so the draw loop threw on its first frame"
 
 tick=$(echo "$dom" | sed -n 's/.*server tick \([0-9]*\).*/\1/p' | head -1)
 if [ "${connected:-no}" = "yes" ] && [ "${tick:-0}" -gt 0 ]; then

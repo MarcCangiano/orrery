@@ -32,6 +32,12 @@ public final class Arena {
     /** Ticks the world holds still after a goal, so a score is legible. */
     public static final int RESET_TICKS = 90;
 
+    /** Goals that win a match. */
+    public static final int GOALS_TO_WIN = 5;
+
+    /** A longer pause at the end of a match than after an ordinary goal. */
+    public static final int MATCH_END_TICKS = 240;
+
     /** Shove: reach beyond the two radii, impulse at point blank, and the wait. */
     public static final double SHOVE_RANGE = 6.0;
     public static final double SHOVE_IMPULSE = 26.0;

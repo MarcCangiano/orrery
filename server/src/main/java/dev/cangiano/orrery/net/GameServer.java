@@ -69,6 +69,8 @@ public final class GameServer {
     private final List<Body> fragments = new ArrayList<>();
     /** Ticks left of the pause after a goal. Inputs are ignored while it runs. */
     private int freeze;
+    /** Team that won the match in progress, or -1 while it is still being played. */
+    private int winner = -1;
 
     private Javalin app;
     private Thread simThread;
@@ -271,14 +273,31 @@ public final class GameServer {
 
                     if (freeze > 0) {
                         freeze--;
+                        if (freeze == 0 && winner >= 0) {
+                            // The end-of-match pause is over: wipe the score and
+                            // start again, rather than leaving a finished match
+                            // on screen with nothing to do.
+                            score[0] = 0;
+                            score[1] = 0;
+                            winner = -1;
+                            resetPositions();
+                            System.out.println("new match");
+                        }
                     } else {
                         int scorer = Arena.scoringTeam(star);
                         if (scorer >= 0) {
                             score[scorer]++;
                             resetPositions();
-                            freeze = Arena.RESET_TICKS;
-                            System.out.printf("goal for team %d  (%d - %d)%n",
-                                    scorer, score[0], score[1]);
+                            if (score[scorer] >= Arena.GOALS_TO_WIN) {
+                                winner = scorer;
+                                freeze = Arena.MATCH_END_TICKS;
+                                System.out.printf("team %d wins  (%d - %d)%n",
+                                        scorer, score[0], score[1]);
+                            } else {
+                                freeze = Arena.RESET_TICKS;
+                                System.out.printf("goal for team %d  (%d - %d)%n",
+                                        scorer, score[0], score[1]);
+                            }
                         }
                     }
                 }
@@ -383,7 +402,7 @@ public final class GameServer {
             if (ctx.session.isOpen()) {
                 Player p = e.getValue();
                 ctx.send(write(Messages.Snapshot.of(tick, p.ack, p.missed,
-                        score[0], score[1], freeze, p.shoveReadyTick, states)));
+                        score[0], score[1], freeze, p.shoveReadyTick, winner, states)));
             }
         }
     }

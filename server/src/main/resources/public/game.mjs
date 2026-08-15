@@ -86,6 +86,7 @@ const bodyTether = new Map();
 let shoveHeld = false;
 let score = [0, 0];
 let freeze = 0;
+let winner = -1;
 
 let rttMs = 0;
 const sentAt = new Map();
@@ -161,6 +162,7 @@ function handle(raw) {
   missedOnServer = m.missed;
   score = [m.scoreA, m.scoreB];
   freeze = m.freeze;
+  winner = m.winner;
   for (const b of m.bodies) {
     bodyTeam.set(b.id, b.team);
     bodyTether.set(b.id, b.tether);
@@ -456,10 +458,27 @@ function draw(now) {
     ctx.stroke();
   }
 
+  if (freeze > 0) {
+    ctx.setTransform(scale, 0, 0, scale, ox, oy);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const big = winner >= 0 ? `${TEAM_NAME[winner].toUpperCase()} WIN` : 'GOAL';
+    ctx.font = `600 ${winner >= 0 ? 9 : 11}px ui-monospace, Menlo, monospace`;
+    // Fades as the pause runs out, so the world coming back to life is visible
+    // rather than sudden.
+    const span = winner >= 0 ? 240 : 90;
+    ctx.globalAlpha = Math.min(1, freeze / (span * 0.5));
+    ctx.fillStyle = winner >= 0 ? TEAM_COLOR[winner] : '#ffe9b0';
+    ctx.fillText(big, cfg.w / 2, cfg.h / 2);
+    ctx.globalAlpha = 1;
+  }
+
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   hud.innerHTML =
     `<b>${score[0]}</b> Norse   Greek <b>${score[1]}</b>` +
-    (freeze > 0 ? '   <span id="warn">goal</span>' : '') + `\n` +
+    (winner >= 0
+      ? `   <span id="warn">${TEAM_NAME[winner]} win</span>`
+      : freeze > 0 ? '   <span id="warn">goal</span>' : '') + `\n` +
     `orrery  <b>you are ${myId ?? '...'}</b> (${TEAM_NAME[myTeam]})\n` +
     `server tick ${serverTick}   client tick ${predTick}   lead ${predTick - serverTick}\n` +
     `rtt ${rttMs.toFixed(0)}ms   fake lag ${fakeLagMs}ms   missed on server ${missedOnServer}\n` +

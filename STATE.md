@@ -75,7 +75,7 @@ Two reasons, in order:
 - [x] Others drawn from the predicted world, not interpolated in the past
 - [ ] Interest management
 - [ ] Lag compensation for the shove
-- [ ] Match flow: a score limit and an end
+- [x] Match flow: first to 5, a longer pause, then a fresh match
 - [ ] Sound
 - [ ] Deploy: server on a box, client on Pages
 

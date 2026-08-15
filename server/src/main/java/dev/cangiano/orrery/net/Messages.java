@@ -116,11 +116,14 @@ public final class Messages {
             @JsonProperty("scoreB") int scoreB,
             @JsonProperty("freeze") int freeze,
             @JsonProperty("ready") long ready,
+            /** -1 while a match is running, else the team that just won it. */
+            @JsonProperty("winner") int winner,
             @JsonProperty("bodies") List<BodyState> bodies) {
         public static Snapshot of(long tick, long ack, long missed,
-                int scoreA, int scoreB, int freeze, long ready, List<BodyState> bodies) {
+                int scoreA, int scoreB, int freeze, long ready, int winner,
+                List<BodyState> bodies) {
             return new Snapshot("state", tick, ack, missed, scoreA, scoreB,
-                    freeze, ready, bodies);
+                    freeze, ready, winner, bodies);
         }
     }
 }

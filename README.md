@@ -9,7 +9,7 @@ prediction. Norse against Greek.
 
 ```
 ./run.sh          # then open http://localhost:7070
-./verify.sh       # tests, physics drift check, live prediction check
+./verify.sh       # tests, physics drift, live prediction, real browser
 ```
 
 Controls: **WASD** thrust, **SPACE** shove, **SHIFT** tether.
@@ -47,8 +47,7 @@ rewinds to the server's version of the world and replays whatever came after it.
 
 When both simulations agree, that replay lands exactly where the client already
 was and nothing visible happens. That is the whole trick, and it only works if
-they really do agree, which is what two of the three checks in `verify.sh` are
-for.
+they really do agree, which is what the checks in `verify.sh` are for.
 
 ```
 tools/drift-check.sh      Java and JavaScript physics over identical inputs,
@@ -71,7 +70,7 @@ tools/client-check.sh     Loads the actual page in a browser. Exists because a
 Current numbers: **0.000000 units** of prediction error, with star collisions,
 shoves, and a tethered swing inside the measured run.
 
-## Four bugs worth reading about
+## Five bugs worth reading about
 
 Every one of these was invisible until something measured it, and each is
 written up in the commit that fixed it.
@@ -132,7 +131,7 @@ server/src/main/resources/public/
   sim.mjs                 the same physics, in JavaScript
   predictor.mjs           prediction and reconciliation
   game.mjs                input, rendering, the clock estimate
-tools/                    the two checks that catch netcode bugs
+tools/                    the checks that catch netcode bugs
 ```
 
 `sim.mjs` is a line-for-line mirror of the Java, and the drift check fails the
