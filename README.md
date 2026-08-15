@@ -17,6 +17,13 @@ Debug: **P** toggles prediction, **L** adds fake lag, **G** shows the server's
 ghost. Add `?auto=1` and the page plays itself, which is how the screenshots are
 taken and how you watch prediction work without needing three hands.
 
+![Orrery](docs/screenshot.png)
+
+*A live frame: the star top right, a player and the bot contesting it, two
+impact rings from the last collision, and the amber circle behind the green
+player is where the server thinks that player is, 116ms of round trip back.
+Prediction error at that moment: 0.0000.*
+
 ---
 
 ## What it is
