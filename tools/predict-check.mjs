@@ -49,6 +49,8 @@ let lastServerTick = 0;
 let lateSnapshots = 0;
 let skippedForGoals = 0;
 let starContacts = 0;
+/** When the star was first hit, which is when the scripted phases start. */
+let firstContactAt = 0;
 let touchingStar = false;
 let shoves = 0;
 let tetheredTicks = 0;
@@ -125,7 +127,10 @@ ws.addEventListener('message', ev => {
     starPos = { x: star.x, y: star.y };
     const gap = Math.hypot(star.x - truth.x, star.y - truth.y);
     const touching = gap <= star.r + truth.r + 0.25;
-    if (touching && !touchingStar) starContacts++;
+    if (touching && !touchingStar) {
+      starContacts++;
+      if (firstContactAt === 0) firstContactAt = Date.now();
+    }
     touchingStar = touching;
   }
 
@@ -179,16 +184,32 @@ ws.addEventListener('message', ev => {
  * contact reliable, which is the whole point of the check.
  */
 function intent(t) {
-  // Four short phases rather than three long ones: a six second run with a
-  // slow cycle sometimes finished without ever reaching the star, which made
-  // the coverage check flaky rather than informative.
-  const phase = Math.floor(t / 800) % 4;
   if (!starPos || !myPos) return { ax: 1, ay: 0, mayShove: false };
 
   const dx = starPos.x - myPos.x;
   const dy = starPos.y - myPos.y;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
   const toStar = { ax: dx / len, ay: dy / len };
+
+  /*
+   * Chase, without a timer, until the star has actually been hit once.
+   *
+   * Two of the four phases below push AWAY from the star, so a shove that sends
+   * it across the arena can leave the remaining closing phases too short to get
+   * back. That is a coverage failure caused by the script rather than by the
+   * product, and it showed up as this check failing once and passing on a
+   * re-run, which is the worst way for a gate to behave: a check people learn
+   * to re-run is a check people learn to ignore.
+   *
+   * So contact is not left to timing. The cycle does not start until the
+   * collision path this check exists to exercise has been exercised, and the
+   * phase clock is measured from that moment rather than from kick-off.
+   */
+  if (firstContactAt === 0) return { ...toStar, mayShove: false, tether: false };
+
+  // Four short phases rather than three long ones: a six second run with a
+  // slow cycle sometimes finished without ever reaching the star.
+  const phase = Math.floor((Date.now() - firstContactAt) / 800) % 4;
 
   // Two phases closing on the star with the hands down, one backing off and
   // shoving. Both the collision path and the shove path get exercised.
