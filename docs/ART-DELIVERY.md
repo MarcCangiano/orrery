@@ -156,3 +156,33 @@ Two renderer changes were needed on top of the files themselves:
 - **The room got brighter, not the textures.** The floor albedo is graded very
   dark by design, so the material multiplies it up rather than the file being
   changed. The albedo stays the source of truth.
+
+
+## Second pass, after looking at it in the game (2026-08-15)
+
+Boss's read: the background looked bad, the character textures were not visible,
+the star was right. Two of those were true and neither was the artwork's fault.
+
+**The bodies were fine and the exposure was wrong.** Rendered close up they are
+exactly what was asked for: cracked frost-blue iron and charcoal marble with
+molten gold veining (`docs/bodies-closeup.png`). At the distance the game is
+played from a player is about twenty pixels, and multiplying a texture averaging
+rgb(50,45,30) by a saturated team colour left twenty pixels of near-black.
+
+Bodies are now multiplied by a near-white, given a small self-illumination in
+their team colour so one on the dark side of the arena is dim rather than
+absent, and wrapped in an unlit rim shell in the team colour. Identity comes
+from the rim, which survives any distance and any lighting. The texture is then
+free to be a material rather than a label, which is what it is good at.
+
+**The floor was the problem, not the sky.** It extended forty units past the
+cage, so it lit up as a pale slab spreading out underneath and the arena looked
+like a board on a table. The floor is now exactly the cage, the backdrop is
+turned down to 0.3, and the deck carries the orrery it was built from: four
+concentric orbit rings, graduation ticks around the outer one, and a halfway
+line. A featureless plane also gives the eye nothing to judge speed against,
+which matters in a game about momentum.
+
+The floor material is brighter and slightly metallic now as well, because the
+panel seams and rivets in that texture were completely invisible at the previous
+exposure, and a texture nobody can see is a texture nobody needed.
