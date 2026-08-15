@@ -75,7 +75,8 @@ public final class GameServer {
     private volatile boolean running;
 
     /** One intent from a client, addressed to a specific server tick. */
-    private record Command(long seq, long tick, double ax, double ay, boolean shove) {}
+    private record Command(long seq, long tick, double ax, double ay,
+            boolean shove, boolean tether) {}
 
     /** What the server knows about one connection. */
     private static final class Player {
@@ -83,11 +84,14 @@ public final class GameServer {
         /** Written by network threads, read by the sim thread. Slot is tick % INPUT_RING. */
         final AtomicReferenceArray<Command> ring = new AtomicReferenceArray<>(INPUT_RING);
         // Only the sim thread touches these.
-        Command lastApplied = new Command(0, 0, 0, 0, false);
+        Command lastApplied = new Command(0, 0, 0, 0, false, false);
         volatile long ack;
         volatile long missed;
         /** The tick this player may shove again. Only the sim thread writes it. */
         volatile long shoveReadyTick;
+        /** Anchor this player is roped to, or null. Sim thread only. */
+        Body anchor;
+        double tetherLength;
 
         Player(int id) {
             this.id = id;
@@ -121,7 +125,8 @@ public final class GameServer {
                 ctx.send(write(Messages.Welcome.of(id, Arena.WIDTH, Arena.HEIGHT, TICK_HZ,
                         THRUST, World.MAX_SPEED, World.WALL_RESTITUTION,
                         World.BODY_RESTITUTION, team, Arena.JAWS_HALF_HEIGHT,
-                        Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE, Arena.SHOVE_COOLDOWN)));
+                        Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE, Arena.SHOVE_COOLDOWN,
+                        Arena.TETHER_REACH, Arena.TETHER_MAX_LENGTH)));
                 System.out.printf("player %d joined team %d (%d online)%n",
                         id, team, players.size());
             });
@@ -142,7 +147,8 @@ public final class GameServer {
                         forTick,
                         clamp(node.path("ax").asDouble(0), -1, 1),
                         clamp(node.path("ay").asDouble(0), -1, 1),
-                        node.path("sh").asBoolean(false));
+                        node.path("sh").asBoolean(false),
+                        node.path("th").asBoolean(false));
                 p.ring.set((int) Math.floorMod(forTick, INPUT_RING), c);
             });
 
@@ -202,6 +208,30 @@ public final class GameServer {
                             // thruster and wrong for a one-shot action: it would
                             // fire again the moment the cooldown lapsed, on a
                             // tick the player never asked for.
+                            // Tether is a hold: the line is out while the key is
+                            // down and drops the moment it is released, so the
+                            // held intent is exactly right here, unlike the shove.
+                            if (p.lastApplied.tether()) {
+                                if (p.anchor == null) {
+                                    p.anchor = nearestAnchor(b);
+                                    if (p.anchor != null) {
+                                        double dx = b.x - p.anchor.x;
+                                        double dy = b.y - p.anchor.y;
+                                        // Rope is exactly as long as the throw,
+                                        // capped, so a distant catch does not
+                                        // hand out a huge orbit for free.
+                                        p.tetherLength = Math.min(
+                                                Math.sqrt(dx * dx + dy * dy),
+                                                Arena.TETHER_MAX_LENGTH);
+                                    }
+                                }
+                            } else {
+                                p.anchor = null;
+                            }
+                            if (p.anchor != null) {
+                                World.applyTether(b, p.anchor.x, p.anchor.y, p.tetherLength);
+                            }
+
                             boolean asked = c != null && c.tick() == tick && c.shove();
                             if (asked && tick >= p.shoveReadyTick) {
                                 world.shove(b, Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE);
@@ -247,6 +277,32 @@ public final class GameServer {
         }
     }
 
+    /**
+     * The nearest thing worth roping to: a ring fragment or the star.
+     *
+     * <p>Players are deliberately not anchors. Roping to another player is a
+     * good idea for a later version and a bad one to add at the same time as
+     * the tether itself, because it makes prediction depend on someone else's
+     * input rather than only on their position.
+     */
+    private Body nearestAnchor(Body from) {
+        Body best = null;
+        double bestDist = Arena.TETHER_REACH;
+        for (Body b : world.bodies()) {
+            if (b.id >= 0) {
+                continue;   // players are not anchors
+            }
+            double dx = b.x - from.x;
+            double dy = b.y - from.y;
+            double dist = Math.sqrt(dx * dx + dy * dy) - b.radius;
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = b;
+            }
+        }
+        return best;
+    }
+
     /** Everything back where it started, at rest. Called after a goal. */
     private void resetPositions() {
         star.x = Arena.WIDTH / 2;
@@ -261,6 +317,7 @@ public final class GameServer {
                 b.vx = 0;
                 b.vy = 0;
             }
+            p.anchor = null;
         }
     }
 
@@ -270,8 +327,16 @@ public final class GameServer {
             states = new ArrayList<>(world.bodies().size());
             for (Body b : world.bodies()) {
                 int team = b.id < 0 ? -1 : Arena.teamOf(b.id);
+                int anchorId = 0;
+                double ropeLength = 0;
+                for (Player p : players.values()) {
+                    if (p.id == b.id && p.anchor != null) {
+                        anchorId = p.anchor.id;
+                        ropeLength = p.tetherLength;
+                    }
+                }
                 states.add(new Messages.BodyState(b.id, b.x, b.y, b.vx, b.vy,
-                        b.radius, b.mass, team, b.immovable));
+                        b.radius, b.mass, team, b.immovable, anchorId, ropeLength));
             }
         }
         // Each client gets its own frame, because ack is per client.

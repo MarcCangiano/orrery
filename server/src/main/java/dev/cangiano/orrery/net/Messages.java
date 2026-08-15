@@ -57,14 +57,16 @@ public final class Messages {
             @JsonProperty("jaws") double jaws,
             @JsonProperty("shoveRange") double shoveRange,
             @JsonProperty("shoveImpulse") double shoveImpulse,
-            @JsonProperty("shoveCooldown") int shoveCooldown) {
+            @JsonProperty("shoveCooldown") int shoveCooldown,
+            @JsonProperty("tetherReach") double tetherReach,
+            @JsonProperty("tetherMax") double tetherMax) {
         public static Welcome of(int id, double w, double h, int hz,
                 double thrust, double maxSpeed, double restitution, double bodyRestitution,
                 int team, double jaws, double shoveRange, double shoveImpulse,
-                int shoveCooldown) {
+                int shoveCooldown, double tetherReach, double tetherMax) {
             return new Welcome("welcome", id, w, h, hz, thrust, maxSpeed,
                     restitution, bodyRestitution, team, jaws,
-                    shoveRange, shoveImpulse, shoveCooldown);
+                    shoveRange, shoveImpulse, shoveCooldown, tetherReach, tetherMax);
         }
     }
 
@@ -78,7 +80,17 @@ public final class Messages {
             @JsonProperty("r") double r,
             @JsonProperty("m") double m,
             @JsonProperty("team") int team,
-            @JsonProperty("fixed") boolean fixed) {}
+            @JsonProperty("fixed") boolean fixed,
+            /** Anchor id this body is roped to, or 0. Lets everyone draw the line. */
+            @JsonProperty("tether") int tether,
+            /**
+             * Rope length. On the wire because the length is fixed at the moment
+             * the line catches, and client and server can reach that moment a
+             * tick apart when an input arrives late. Left to itself that is a
+             * permanent few centimetres of disagreement; sent, it is corrected
+             * on the next snapshot like everything else.
+             */
+            @JsonProperty("tlen") double tetherLength) {}
 
     /**
      * The world as the server sees it, which is the only version that counts.

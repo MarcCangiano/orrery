@@ -46,6 +46,9 @@ export class Predictor {
     this.worstError = 0;
     /** Tick our own shove is available again. Re-synced from every snapshot. */
     this.shoveReadyTick = 0;
+    /** Anchor body we are roped to, or null, plus the rope's length. */
+    this.anchor = null;
+    this.tetherLength = 0;
   }
 
   /** Record the intent addressed to a tick. */
@@ -61,6 +64,27 @@ export class Predictor {
     // During the pause after a goal the server ignores thrust, so predicting
     // any would put us somewhere the server never goes.
     const applied = frozen ? { ax: 0, ay: 0 } : input;
+
+    // Tether is a hold, so the held intent is right here. Same rule and same
+    // anchor choice as the server, or a swing would predict as a straight line.
+    if (!frozen) {
+      if (input.th) {
+        if (!this.anchor) {
+          this.anchor = this.nearestAnchor();
+          if (this.anchor) {
+            const dx = this.body.x - this.anchor.x;
+            const dy = this.body.y - this.anchor.y;
+            this.tetherLength = Math.min(
+              Math.sqrt(dx * dx + dy * dy), this.cfg.tetherMax);
+          }
+        }
+      } else {
+        this.anchor = null;
+      }
+      if (this.anchor) {
+        World.applyTether(this.body, this.anchor.x, this.anchor.y, this.tetherLength);
+      }
+    }
 
     // The shove fires only on a tick we actually addressed an input to, never
     // from a held intent, matching the server exactly. See GameServer.
@@ -143,6 +167,16 @@ export class Predictor {
     // never fired.
     if (serverShoveReady !== null) this.shoveReadyTick = serverShoveReady;
 
+    // The server owns the rope. Adopting its anchor and length rather than
+    // trusting our own means a catch that happened a tick apart is corrected
+    // here instead of leaving a permanent offset.
+    if (mine.tether) {
+      this.anchor = this.world.byId(mine.tether) ?? null;
+      if (this.anchor && mine.tlen) this.tetherLength = mine.tlen;
+    } else {
+      this.anchor = null;
+    }
+
     const to = this.tick;
     this.history.clear();
     this.history.set(serverTick, { x: mine.x, y: mine.y, vx: mine.vx, vy: mine.vy });
@@ -156,6 +190,23 @@ export class Predictor {
     }
     this.tick = to;
     return replayed;
+  }
+
+  /** Nearest fragment or star within reach. Players are not anchors. */
+  nearestAnchor() {
+    let best = null;
+    let bestDist = this.cfg.tetherReach;
+    for (const b of this.world.bodies) {
+      if (b.id >= 0) continue;
+      const dx = b.x - this.body.x;
+      const dy = b.y - this.body.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) - b.radius;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = b;
+      }
+    }
+    return best;
   }
 
   /** The intent the server would be holding at this tick. */

@@ -34,8 +34,10 @@ const hud = document.getElementById('hud');
 const INTERP_DELAY_MS = 80;
 
 // Extra ticks of lead beyond measured latency. Costs responsiveness, buys
-// tolerance for jitter. Two ticks is 33ms.
-const SAFETY_TICKS = 2;
+// tolerance for jitter. Four ticks is 67ms of margin: at two, roughly one input
+// a second arrived after the server had already simulated its tick, and every
+// one of those is a visible snap.
+const SAFETY_TICKS = 4;
 
 // Beyond this the estimate is not adjusted, it is replaced.
 const RESYNC_THRESHOLD = 10;
@@ -44,6 +46,7 @@ const cfg = {
   w: 120, h: 70, hz: 60, thrust: 60, maxSpeed: 40, restitution: 0.75,
   bodyRestitution: 0.9, dt: 1 / 60, dtMs: 1000 / 60, jaws: 70 / 6,
   shoveRange: 6, shoveImpulse: 26, shoveCooldown: 40,
+  tetherReach: 26, tetherMax: 22,
 };
 
 const STAR_ID = -1;
@@ -55,6 +58,7 @@ let predictor = null;
 
 /** Tick our predicted state is the result of. Deliberately ahead of the server. */
 let predTick = 0;
+let targetTick = 0;
 let haveClock = false;
 let seq = 0;
 
@@ -127,7 +131,8 @@ function handle(raw) {
       maxSpeed: m.maxSpeed, restitution: m.restitution,
       bodyRestitution: m.bodyRestitution, jaws: m.jaws,
       shoveRange: m.shoveRange, shoveImpulse: m.shoveImpulse,
-      shoveCooldown: m.shoveCooldown,
+      shoveCooldown: m.shoveCooldown, tetherReach: m.tetherReach,
+      tetherMax: m.tetherMax,
       dt: 1 / m.hz, dtMs: 1000 / m.hz,
     });
     myTeam = m.team;
@@ -157,12 +162,16 @@ function handle(raw) {
 
   if (!haveClock || Math.abs(target - predTick) > RESYNC_THRESHOLD) {
     predTick = target;
+    targetTick = target;
     predictor.tick = target;
     haveClock = true;
-  } else if (target > predTick) {
-    predTick += 1;   // one tick at a time, so the correction is never felt
-  } else if (target < predTick) {
-    predTick -= 1;
+  } else {
+    // Never move predTick directly. Skipping a tick number here was costing
+    // roughly one input a second: nothing was ever addressed to the skipped
+    // tick, so the server held the previous intent and the client had to be
+    // corrected. The local loop closes the gap instead, one whole tick at a
+    // time, and every tick gets an input.
+    targetTick = target;
   }
 
   const truth = m.bodies.find(b => b.id === myId);
@@ -200,11 +209,12 @@ function localTick() {
   // One shove per press, not one per tick the bar is held down.
   const sh = shoveHeld && tick >= predictor.shoveReadyTick;
   if (sh) shoveHeld = false;
+  const th = keys.has('shift');
   seq++;
-  const input = { ax, ay, sh };
+  const input = { ax, ay, sh, th };
   predictor.setInput(tick, input);
   sentAt.set(seq, performance.now());
-  send({ t: 'input', seq, tick, ax, ay, sh });
+  send({ t: 'input', seq, tick, ax, ay, sh, th });
 
   // Always advance, even with prediction switched off, so the predictor's tick
   // and history stay aligned with the server and P can be toggled at any moment.
@@ -238,6 +248,9 @@ function interpolatedBodies(now) {
       x: a.x + (b.x - a.x) * alpha,
       y: a.y + (b.y - a.y) * alpha,
       r: a.r,
+      team: a.team,
+      fixed: a.fixed,
+      tether: b.tether,
     });
   }
   return out;
@@ -253,6 +266,16 @@ function frame() {
   while (accumulator >= cfg.dtMs && guard++ < 10) {
     accumulator -= cfg.dtMs;
     localTick();
+    // Behind the server's clock: run an extra tick to catch up rather than
+    // renumbering, so no tick is ever left without an input.
+    if (haveClock && predTick < targetTick && guard++ < 10) {
+      localTick();
+    }
+  }
+  // Ahead of it: let the accumulator drain without emitting, which slows the
+  // client's clock by a tick instead of jumping it backwards.
+  if (haveClock && predTick > targetTick + 1) {
+    accumulator = 0;
   }
 
   draw(now);
@@ -338,6 +361,27 @@ function draw(now) {
     ctx.stroke();
   }
 
+  // The rope, drawn from the predicted position so it tracks the hand rather
+  // than lagging a snapshot behind it.
+  if (predictor?.anchor && predictor.body) {
+    ctx.beginPath();
+    ctx.moveTo(predictor.body.x, predictor.body.y);
+    ctx.lineTo(predictor.anchor.x, predictor.anchor.y);
+    ctx.strokeStyle = 'rgba(190,215,255,.75)';
+    ctx.stroke();
+  }
+  // Everyone else's ropes come from the snapshot.
+  for (const b of interpolatedBodies(now)) {
+    if (b.id === myId || !b.tether) continue;
+    const anchor = interpolatedBodies(now).find(x => x.id === b.tether);
+    if (!anchor) continue;
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(anchor.x, anchor.y);
+    ctx.strokeStyle = 'rgba(150,170,210,.4)';
+    ctx.stroke();
+  }
+
   const me = predictionOn ? predictor?.body : serverMe;
   if (me) {
     const r = me.radius ?? me.r;
@@ -366,7 +410,7 @@ function draw(now) {
     `correction ${correctionError.toFixed(4)}  worst ${worstCorrection.toFixed(4)}\n` +
     `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
         Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
-    `WASD thrust   SPACE shove   P prediction   L lag   G ghost`;
+    `WASD thrust   SPACE shove   SHIFT tether   P prediction   L lag   G ghost`;
 }
 
 requestAnimationFrame(frame);

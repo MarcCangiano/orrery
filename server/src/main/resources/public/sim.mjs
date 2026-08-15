@@ -170,6 +170,26 @@ export class World {
     b.vy += impulse * ny * invB;
   }
 
+  // A rope, not a spring: acts only when taut, removes only the outward part of
+  // the velocity, leaves swing speed untouched. Mirrors World.applyTether.
+  static applyTether(body, ax, ay, length) {
+    const dx = body.x - ax;
+    const dy = body.y - ay;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist <= length || dist === 0) return;
+
+    const nx = dx / dist;
+    const ny = dy / dist;
+    body.x = ax + nx * length;
+    body.y = ay + ny * length;
+
+    const outward = body.vx * nx + body.vy * ny;
+    if (outward > 0) {
+      body.vx -= outward * nx;
+      body.vy -= outward * ny;
+    }
+  }
+
   bounceOffWalls(b) {
     const min = b.radius;
     const maxX = this.width - b.radius;

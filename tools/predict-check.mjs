@@ -15,13 +15,13 @@
 import { Predictor } from '../server/src/main/resources/public/predictor.mjs';
 
 const url = process.argv[2] ?? 'ws://localhost:7070/ws';
-const SECONDS = 6;
+const SECONDS = 9;
 
 // A body is 1.6 units across. A tenth of a unit is invisible on screen but far
 // larger than floating point noise, so this catches systematic error only.
 const MAX_ALLOWED_ERROR = 0.1;
 
-const SAFETY_TICKS = 2;
+const SAFETY_TICKS = 4;
 const RESYNC_THRESHOLD = 10;
 
 const cfg = { dt: 1 / 60, dtMs: 1000 / 60, thrust: 60, w: 120, h: 70, maxSpeed: 40, restitution: 0.75 };
@@ -29,6 +29,7 @@ let myId = null;
 let predictor = null;
 let seq = 0;
 let predTick = 0;
+let targetTick = 0;
 let haveClock = false;
 let rttMs = 0;
 const sentAt = new Map();
@@ -41,10 +42,13 @@ let worstError = 0;
 // interesting than a straight line. Count the contacts and fail without them.
 let goals = 0;
 let lastFreeze = 0;
+let lastMissed = 0;
+let lateSnapshots = 0;
 let skippedForGoals = 0;
 let starContacts = 0;
 let touchingStar = false;
 let shoves = 0;
+let tetheredTicks = 0;
 let starPos = null;
 let myPos = null;
 
@@ -68,6 +72,8 @@ ws.addEventListener('message', ev => {
     cfg.shoveRange = m.shoveRange;
     cfg.shoveImpulse = m.shoveImpulse;
     cfg.shoveCooldown = m.shoveCooldown;
+    cfg.tetherReach = m.tetherReach;
+    cfg.tetherMax = m.tetherMax;
     predictor = new Predictor(cfg, myId, { x: cfg.w / 2, y: cfg.h / 2, r: 1.6 });
     return;
   }
@@ -90,10 +96,14 @@ ws.addEventListener('message', ev => {
   const target = m.tick + leadTicks;
   if (!haveClock || Math.abs(target - predTick) > RESYNC_THRESHOLD) {
     predTick = target;
+    targetTick = target;
     predictor.tick = target;
     haveClock = true;
-  } else if (target > predTick) predTick += 1;
-  else if (target < predTick) predTick -= 1;
+  } else {
+    // Never renumber. See the note in game.mjs: a skipped tick is an input the
+    // server never receives.
+    targetTick = target;
+  }
 
   const star = m.bodies.find(b => b.id === -1);
   myPos = { x: truth.x, y: truth.y };
@@ -117,7 +127,15 @@ ws.addEventListener('message', ev => {
     if (wasFreeze === 0) goals++;   // snapshots are every other tick, so watch the edge
     skippedForGoals++;
     predictor.lastError = 0;
+  } else if (m.missed > lastMissed) {
+    // An input arrived after the server had already run that tick, so it held
+    // the previous intent and we predicted the new one. The correction is
+    // right; what matters is how often it happens, counted below.
+    lastMissed = m.missed;
+    lateSnapshots++;
+    measured++;
   } else if (snapshots > 20) {
+    lastMissed = m.missed;
     sumError += predictor.lastError;
     measured++;
     if (predictor.lastError > worstError) worstError = predictor.lastError;
@@ -147,7 +165,10 @@ ws.addEventListener('message', ev => {
  * contact reliable, which is the whole point of the check.
  */
 function intent(t) {
-  const phase = Math.floor(t / 1200) % 3;
+  // Four short phases rather than three long ones: a six second run with a
+  // slow cycle sometimes finished without ever reaching the star, which made
+  // the coverage check flaky rather than informative.
+  const phase = Math.floor(t / 800) % 4;
   if (!starPos || !myPos) return { ax: 1, ay: 0, mayShove: false };
 
   const dx = starPos.x - myPos.x;
@@ -158,24 +179,40 @@ function intent(t) {
   // Two phases closing on the star with the hands down, one backing off and
   // shoving. Both the collision path and the shove path get exercised.
   if (phase === 2) {
-    return { ax: -toStar.ax, ay: -toStar.ay, mayShove: true };
+    // Thrust across the anchor rather than at it, which is what actually makes
+    // a rope go taut.
+    return { ax: -toStar.ay, ay: toStar.ax, mayShove: false, tether: true };
   }
-  return { ...toStar, mayShove: false };
+  if (phase === 3) {
+    // Back off and shove: the action, its recoil, and the rope together.
+    return { ax: -toStar.ax, ay: -toStar.ay, mayShove: true, tether: true };
+  }
+  // Phases 0 and 1 close on the star with the hands down, so a collision
+  // actually happens.
+  return { ...toStar, mayShove: false, tether: false };
 }
 
 const started = Date.now();
-const timer = setInterval(() => {
-  if (!predictor || !haveClock || ws.readyState !== WebSocket.OPEN) return;
+function emitTick() {
   const tick = ++predTick;
-  const { ax, ay, mayShove } = intent(Date.now() - started);
+  const { ax, ay, mayShove, tether } = intent(Date.now() - started);
   const sh = mayShove && tick >= predictor.shoveReadyTick;
+  const th = !!tether;
+  if (predictor.anchor) tetheredTicks++;
   if (sh) shoves++;
   seq++;
-  const input = { ax, ay, sh };
+  const input = { ax, ay, sh, th };
   predictor.setInput(tick, input);
   sentAt.set(seq, Date.now());
-  ws.send(JSON.stringify({ t: 'input', seq, tick, ax, ay, sh }));
+  ws.send(JSON.stringify({ t: 'input', seq, tick, ax, ay, sh, th }));
   predictor.advance(tick);
+}
+
+const timer = setInterval(() => {
+  if (!predictor || !haveClock || ws.readyState !== WebSocket.OPEN) return;
+  emitTick();
+  // Catch up by running an extra tick, never by renumbering.
+  if (predTick < targetTick) emitTick();
 }, 1000 / 60);
 
 setTimeout(() => {
@@ -187,7 +224,11 @@ setTimeout(() => {
   console.log(`  mean error  ${mean.toFixed(6)} units`);
   console.log(`  worst error ${worstError.toFixed(6)} units  (limit ${MAX_ALLOWED_ERROR})`);
 
-  console.log(`  star contacts ${starContacts}   shoves ${shoves}   goals ${goals}`);
+  const lateRate = measured ? lateSnapshots / measured : 0;
+  console.log(`  star contacts ${starContacts}   shoves ${shoves}   goals ${goals}` +
+              `   tethered ticks ${tetheredTicks}`);
+  console.log(`  late inputs ${lateSnapshots}/${measured} snapshots ` +
+              `(${(lateRate * 100).toFixed(1)}%, limit 3.0%)`);
   if (skippedForGoals) {
     console.log(`  ${skippedForGoals} snapshots excluded: the world was resetting after a goal`);
   }
@@ -201,9 +242,20 @@ setTimeout(() => {
     console.error('  recoil were not exercised.');
     process.exit(1);
   }
+  if (tetheredTicks === 0) {
+    console.error('predict-check: FAILED — the rope was never taut, so the');
+    console.error('  tether constraint was not exercised.');
+    process.exit(1);
+  }
   if (starContacts === 0) {
     console.error('predict-check: FAILED — never touched the star, so collision');
     console.error('  prediction was not exercised. Fix the movement script.');
+    process.exit(1);
+  }
+  if (lateRate > 0.03) {
+    console.error('predict-check: FAILED — too many inputs arrived after the server');
+    console.error('  had already simulated their tick. Each one is a visible snap.');
+    console.error('  Raise SAFETY_TICKS, or find out why the client clock is drifting.');
     process.exit(1);
   }
   if (worstError > MAX_ALLOWED_ERROR) {

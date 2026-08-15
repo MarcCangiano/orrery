@@ -203,6 +203,45 @@ public final class World {
         return touched;
     }
 
+    /**
+     * Hold a body on a line to an anchor, as a rope rather than a spring.
+     *
+     * <p>A spring was the first instinct and it is wrong: it oscillates, and an
+     * oscillation that has to be reproduced tick for tick in two runtimes is a
+     * bad bet. A rope only ever acts when it is taut, and it only ever removes
+     * the outward part of your velocity. Swing speed is therefore free, because
+     * nothing along the arc is touched, which is exactly the feel this move is
+     * supposed to have.
+     *
+     * @param body   the tethered body
+     * @param ax     anchor x
+     * @param ay     anchor y
+     * @param length rope length
+     */
+    public static void applyTether(Body body, double ax, double ay, double length) {
+        double dx = body.x - ax;
+        double dy = body.y - ay;
+        double dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= length || dist == 0) {
+            return;   // slack rope does nothing at all
+        }
+
+        double nx = dx / dist;
+        double ny = dy / dist;
+
+        // Put the body back on the circle. Position first, so the constraint
+        // cannot be violated by more than a tick's worth of travel.
+        body.x = ax + nx * length;
+        body.y = ay + ny * length;
+
+        // Then remove the outward velocity, and only the outward part.
+        double outward = body.vx * nx + body.vy * ny;
+        if (outward > 0) {
+            body.vx -= outward * nx;
+            body.vy -= outward * ny;
+        }
+    }
+
     private void bounceOffWalls(Body b) {
         double min = b.radius;
         double maxX = width - b.radius;

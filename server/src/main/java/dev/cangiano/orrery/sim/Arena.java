@@ -37,6 +37,15 @@ public final class Arena {
     public static final double SHOVE_IMPULSE = 26.0;
     public static final int SHOVE_COOLDOWN = 40;
 
+    /**
+     * Tether: how far a line will reach when thrown, and the longest rope it
+     * will pay out. Reach is generous because aiming a grapple with a thruster
+     * is hard enough already; the skill is in when you release, not in catching
+     * the anchor.
+     */
+    public static final double TETHER_REACH = 26.0;
+    public static final double TETHER_MAX_LENGTH = 22.0;
+
     /** Ring fragments: immovable lumps of the dead orrery to bounce off and tether to. */
     public static final double FRAGMENT_RADIUS = 3.2;
     public static final int FIRST_FRAGMENT_ID = -100;
