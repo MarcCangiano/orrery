@@ -32,6 +32,9 @@ public final class Arena {
     /** Ticks the world holds still after a goal, so a score is legible. */
     public static final int RESET_TICKS = 90;
 
+    /** Ticks between the last player readying up and the first kick. */
+    public static final int COUNTDOWN_TICKS = 300;
+
     /** Goals that win a match. */
     public static final int GOALS_TO_WIN = 5;
 
@@ -69,7 +72,11 @@ public final class Arena {
 
     private Arena() {}
 
-    /** Which team a player id belongs to. Norse take the left jaws, Greek the right. */
+    /**
+     * Fallback team for an id, used only for bots and for anything that has not
+     * chosen. Players pick their own side in the lobby now, so this is no longer
+     * the source of truth it used to be.
+     */
     public static int teamOf(int playerId) {
         return Math.floorMod(playerId, 2);
     }

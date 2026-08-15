@@ -87,6 +87,20 @@ public final class GameServer {
     /** Team that won the match in progress, or -1 while it is still being played. */
     private int winner = -1;
 
+    /**
+     * What the room is doing.
+     *
+     * <p>LOBBY means nobody has taken a side yet and there is nothing to
+     * simulate that anyone can affect. COUNTDOWN is the five seconds after
+     * somebody readies up, which exists so a match does not begin while you are
+     * still finding the keyboard. PLAYING is everything else, including the
+     * pauses after a goal, which are their own thing and were here first.
+     */
+    private enum Phase { LOBBY, COUNTDOWN, PLAYING }
+
+    private Phase phase = Phase.LOBBY;
+    private int countdown;
+
     private Javalin app;
     private Thread simThread;
     private volatile boolean running;
@@ -98,6 +112,8 @@ public final class GameServer {
     /** What the server knows about one connection. */
     private static final class Player {
         final int id;
+        /** The side this player chose, or -1 while they are still in the lobby. */
+        volatile int team = -1;
         /** Written by network threads, read by the sim thread. Slot is tick % INPUT_RING. */
         final AtomicReferenceArray<Command> ring = new AtomicReferenceArray<>(INPUT_RING);
         // Only the sim thread touches these.
@@ -133,20 +149,16 @@ public final class GameServer {
                 Player p = new Player(id);
                 players.put(ctx, p);
 
-                int team = Arena.teamOf(id);
-                synchronized (world) {
-                    world.add(new Body(id, Arena.spawnX(team), Arena.spawnY(id / 2),
-                            Arena.PLAYER_RADIUS, Arena.PLAYER_MASS));
-                }
-
+                // No body yet. A player watches from the lobby until they pick
+                // a side, which is also what makes spectating free: a connection
+                // with no team is simply a connection with no body.
                 ctx.send(write(Messages.Welcome.of(id, Arena.WIDTH, Arena.HEIGHT, TICK_HZ,
                         THRUST, World.MAX_SPEED, World.WALL_RESTITUTION,
-                        World.BODY_RESTITUTION, team, Arena.JAWS_HALF_HEIGHT,
+                        World.BODY_RESTITUTION, Arena.JAWS_HALF_HEIGHT,
                         Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE, Arena.SHOVE_COOLDOWN,
                         Arena.TETHER_REACH, Arena.TETHER_MAX_LENGTH)));
-                System.out.printf("player %d joined team %d (%d online)%n",
-                        id, team, players.size());
-                balanceBots();
+                System.out.printf("player %d connected, in the lobby (%d online)%n",
+                        id, players.size());
             });
 
             ws.onMessage(ctx -> {
@@ -155,7 +167,13 @@ public final class GameServer {
                     return;
                 }
                 JsonNode node = json.readTree(ctx.message());
-                if (!"input".equals(node.path("t").asText())) {
+                String type = node.path("t").asText();
+
+                if ("pick".equals(type)) {
+                    pickTeam(p, node.path("team").asInt(0));
+                    return;
+                }
+                if (!"input".equals(type)) {
                     return;
                 }
                 long forTick = node.path("tick").asLong(0);
@@ -180,6 +198,58 @@ public final class GameServer {
         System.out.printf("orrery listening on http://localhost:%d%n", port);
     }
 
+    /**
+     * Take a side and get a body.
+     *
+     * <p>Readying up is what starts the countdown, and only from the lobby: a
+     * player joining a match already in progress drops straight into it rather
+     * than resetting everyone else's game.
+     */
+    private void pickTeam(Player p, int team) {
+        if (team != 0 && team != 1) {
+            return;
+        }
+        synchronized (world) {
+            p.team = team;
+            if (world.byId(p.id) == null) {
+                int seat = countTeam(team) - 1;
+                world.add(new Body(p.id, Arena.spawnX(team), Arena.spawnY(Math.max(seat, 0)),
+                        Arena.PLAYER_RADIUS, Arena.PLAYER_MASS));
+            }
+            if (phase == Phase.LOBBY) {
+                phase = Phase.COUNTDOWN;
+                countdown = Arena.COUNTDOWN_TICKS;
+                score[0] = 0;
+                score[1] = 0;
+                winner = -1;
+                resetPositions();
+            }
+        }
+        System.out.printf("player %d took team %d%n", p.id, team);
+        balanceBots();
+    }
+
+    private int countTeam(int team) {
+        int n = 0;
+        for (Player p : players.values()) {
+            if (p.team == team) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** Everyone who has taken a side. Bots do not count as reasons to keep playing. */
+    private int readyHumans() {
+        int n = 0;
+        for (Player p : players.values()) {
+            if (p.team >= 0) {
+                n++;
+            }
+        }
+        return n;
+    }
+
     private void removePlayer(WsContext ctx) {
         Player p = players.remove(ctx);
         if (p != null) {
@@ -188,6 +258,18 @@ public final class GameServer {
             }
             System.out.printf("player %d left (%d online)%n", p.id, players.size());
             balanceBots();
+            if (readyHumans() == 0) {
+                // Last player out: back to the lobby rather than leaving a match
+                // running for an audience of bots.
+                synchronized (world) {
+                    phase = Phase.LOBBY;
+                    countdown = 0;
+                    winner = -1;
+                    score[0] = 0;
+                    score[1] = 0;
+                    resetPositions();
+                }
+            }
         }
     }
 
@@ -205,7 +287,7 @@ public final class GameServer {
             return;
         }
         synchronized (world) {
-            int humans = players.size();
+            int humans = readyHumans();
             int wanted = humans == 1 ? 1 : 0;
             while (bots.size() > wanted) {
                 Bot gone = bots.remove(bots.size() - 1);
@@ -214,9 +296,16 @@ public final class GameServer {
             }
             while (bots.size() < wanted) {
                 // Take an id on the opposite team to the lone human.
-                int humanId = players.values().iterator().next().id;
+                int humanTeam = 0;
+                for (Player pl : players.values()) {
+                    if (pl.team >= 0) {
+                        humanTeam = pl.team;
+                    }
+                }
                 int id = nextId.getAndIncrement();
-                if (Arena.teamOf(id) == Arena.teamOf(humanId)) {
+                // Take an id whose fallback team is the opposite side, since a
+                // bot has no lobby to choose in.
+                if (Arena.teamOf(id) == humanTeam) {
                     id = nextId.getAndIncrement();
                 }
                 Bot bot = new Bot(id);
@@ -250,16 +339,23 @@ public final class GameServer {
                             p.lastApplied = c;
                             p.ack = c.seq();
                             p.ring.set(slot, null);
-                        } else if (c == null) {
+                        } else if (c == null && p.team >= 0) {
                             // Nothing addressed to this tick arrived in time.
                             // Hold the last intent: a dropped packet should read
                             // as a stutter, not as the thruster cutting out.
+                            //
+                            // Only counted for players who are actually in the
+                            // match. Someone sitting in the lobby sends nothing
+                            // by design, and counting that as a lost input made
+                            // the diagnostic read 240 misses before the game had
+                            // even started.
                             p.missed++;
                         }
                         Body b = world.byId(p.id);
-                        // Nobody thrusts during the pause after a goal. The
-                        // reset is only legible if the world holds still for it.
-                        if (b != null && freeze == 0) {
+                        // Nobody thrusts during the pause after a goal, or while
+                        // the countdown is running. The reset is only legible if
+                        // the world holds still for it.
+                        if (b != null && freeze == 0 && phase == Phase.PLAYING) {
                             // A shove fires only on the tick its own input was
                             // applied, never from a held intent. Holding an
                             // intent across a dropped packet is right for a
@@ -325,7 +421,7 @@ public final class GameServer {
                     }
                     for (Bot bot : bots) {
                         Body b = world.byId(bot.id);
-                        if (b == null || freeze > 0) {
+                        if (b == null || freeze > 0 || phase != Phase.PLAYING) {
                             continue;
                         }
                         bot.think(b, star);
@@ -337,6 +433,14 @@ public final class GameServer {
                     }
 
                     world.step(dt);
+
+                    if (phase == Phase.COUNTDOWN) {
+                        countdown--;
+                        if (countdown <= 0) {
+                            phase = Phase.PLAYING;
+                            System.out.println("kick off");
+                        }
+                    }
 
                     if (freeze > 0) {
                         freeze--;
@@ -350,7 +454,7 @@ public final class GameServer {
                             resetPositions();
                             System.out.println("new match");
                         }
-                    } else {
+                    } else if (phase == Phase.PLAYING) {
                         int scorer = Arena.scoringTeam(star);
                         if (scorer >= 0) {
                             score[scorer]++;
@@ -436,7 +540,7 @@ public final class GameServer {
         for (Player p : players.values()) {
             Body b = world.byId(p.id);
             if (b != null) {
-                b.x = Arena.spawnX(Arena.teamOf(p.id));
+                b.x = Arena.spawnX(p.team >= 0 ? p.team : Arena.teamOf(p.id));
                 b.y = Arena.spawnY(p.id / 2);
                 b.vx = 0;
                 b.vy = 0;
@@ -459,7 +563,16 @@ public final class GameServer {
         synchronized (world) {
             states = new ArrayList<>(world.bodies().size());
             for (Body b : world.bodies()) {
-                int team = b.id < 0 ? -1 : Arena.teamOf(b.id);
+                int team = -1;
+                if (b.id >= 0) {
+                    Player owner = null;
+                    for (Player pl : players.values()) {
+                        if (pl.id == b.id) {
+                            owner = pl;
+                        }
+                    }
+                    team = owner != null ? owner.team : Arena.teamOf(b.id);
+                }
                 int anchorId = 0;
                 double ropeLength = 0;
                 for (Player p : players.values()) {
@@ -478,7 +591,9 @@ public final class GameServer {
             if (ctx.session.isOpen()) {
                 Player p = e.getValue();
                 ctx.send(write(Messages.Snapshot.of(tick, p.ack, p.missed,
-                        score[0], score[1], freeze, p.shoveReadyTick, winner, states)));
+                        score[0], score[1], freeze, p.shoveReadyTick,
+                        phase.name().toLowerCase(), countdown,
+                        countTeam(0), countTeam(1), winner, states)));
             }
         }
     }

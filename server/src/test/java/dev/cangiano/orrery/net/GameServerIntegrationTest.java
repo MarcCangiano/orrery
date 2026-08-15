@@ -94,12 +94,17 @@ class GameServerIntegrationTest {
         assertTrue(myId > 0);
         assertTrue(welcome.get("w").asDouble() > 0, "welcome must describe the arena");
 
+        // Players arrive in the lobby without a body and have to take a side.
+        ws.sendText("{\"t\":\"pick\",\"team\":0}", true).get();
+        Thread.sleep(200);
+
         // Inputs are addressed to a server tick, so the test has to aim ahead of
         // the server the same way a real client does. It learns the current tick
         // from a snapshot and fills the next stretch of ticks with the same
         // intent, which covers whatever the server reaches while these are in
         // flight.
         assertNotNull(awaitSnapshot(collector), "no snapshot arrived to take a tick from");
+        awaitPlaying(collector);
 
         long seq = 0;
         for (int round = 0; round < 6; round++) {
@@ -141,18 +146,20 @@ class GameServerIntegrationTest {
         server.start(port);
 
         Collector one = new Collector();
-        HttpClient.newHttpClient().newWebSocketBuilder()
+        WebSocket wsOne = HttpClient.newHttpClient().newWebSocketBuilder()
                 .buildAsync(URI.create("ws://localhost:" + port + "/ws"), one)
                 .get(5, TimeUnit.SECONDS);
         assertTrue(one.welcomed.await(5, TimeUnit.SECONDS));
 
         Collector two = new Collector();
-        HttpClient.newHttpClient().newWebSocketBuilder()
+        WebSocket wsTwo = HttpClient.newHttpClient().newWebSocketBuilder()
                 .buildAsync(URI.create("ws://localhost:" + port + "/ws"), two)
                 .get(5, TimeUnit.SECONDS);
         assertTrue(two.welcomed.await(5, TimeUnit.SECONDS));
 
-        Thread.sleep(300);
+        wsOne.sendText("{\"t\":\"pick\",\"team\":0}", true).get();
+        wsTwo.sendText("{\"t\":\"pick\",\"team\":1}", true).get();
+        Thread.sleep(400);
 
         JsonNode snapshot = lastMatching(two, "state");
         assertNotNull(snapshot);
@@ -177,6 +184,19 @@ class GameServerIntegrationTest {
                 "and every ring fragment");
         assertTrue(snapshot.has("scoreA") && snapshot.has("scoreB"),
                 "snapshots carry the score");
+    }
+
+    /** Waits out the five second countdown, during which nothing moves by design. */
+    private void awaitPlaying(Collector c) throws Exception {
+        long deadline = System.nanoTime() + 12_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            JsonNode n = lastMatching(c, "state");
+            if (n != null && "playing".equals(n.path("phase").asText())) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("the match never started");
     }
 
     /** Snapshots start 16ms after connect, so a test that reads one immediately loses the race. */

@@ -31,6 +31,8 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const hud = document.getElementById('hud');
 const scoreboard = document.getElementById('score');
+const overlay = document.getElementById('overlay');
+const panel = document.getElementById('panel');
 
 // Other players used to be drawn from interpolated snapshots, roughly 80ms in
 // the past. That is the standard answer and it is the wrong one here.
@@ -80,7 +82,12 @@ const snapshots = [];
 let serverTick = 0;
 let serverMe = null;
 let missedOnServer = 0;
-let myTeam = 0;
+let myTeam = -1;
+let phase = 'lobby';
+let countdown = 0;
+let sideCounts = [0, 0];
+/** start, sides, or none: what the overlay is showing, which the server does not decide. */
+let lobbyScreen = 'start';
 let shoveReady = 0;
 const bodyTeam = new Map();
 const bodyTether = new Map();
@@ -191,8 +198,9 @@ function handle(raw) {
       tetherMax: m.tetherMax,
       dt: 1 / m.hz, dtMs: 1000 / m.hz,
     });
-    myTeam = m.team;
+
     predictor = new Predictor(cfg, myId, { x: cfg.w / 2, y: cfg.h / 2, r: 1.6 });
+    if (AUTOPILOT) send({ t: 'pick', team: 1 });
     return;
   }
 
@@ -203,6 +211,11 @@ function handle(raw) {
   score = [m.scoreA, m.scoreB];
   freeze = m.freeze;
   winner = m.winner;
+  phase = m.phase;
+  countdown = m.countdown;
+  sideCounts = [m.norse, m.greek];
+  const mine = m.bodies.find(b => b.id === myId);
+  if (mine) myTeam = mine.team;
   for (const b of m.bodies) {
     bodyTeam.set(b.id, b.team);
     bodyTether.set(b.id, b.tether);
@@ -278,6 +291,51 @@ function autopilot() {
   return { ax: dx / len, ay: dy / len, sh: closeEnough, th: false };
 }
 
+/**
+ * The lobby, which is DOM rather than canvas on purpose: buttons that can be
+ * tabbed to and clicked are worth more than anything hand-drawn, and the arena
+ * keeps running behind it so the connection is visibly alive before anyone
+ * commits to a side.
+ */
+function renderOverlay() {
+  const wantOverlay = myTeam < 0 || phase === 'countdown';
+  overlay.classList.toggle('show', wantOverlay);
+  if (!wantOverlay) return;
+
+  if (phase === 'countdown' && myTeam >= 0) {
+    const seconds = Math.max(1, Math.ceil(countdown / cfg.hz));
+    panel.innerHTML =
+      `<div id="countdown">${seconds}</div>` +
+      `<div class="tag">${TEAM_NAME[myTeam]}</div>`;
+    return;
+  }
+
+  if (lobbyScreen === 'start') {
+    panel.innerHTML =
+      `<h1>ORRERY</h1>` +
+      `<div class="tag">feed the star to the serpent</div>` +
+      `<button id="startbtn">START</button>` +
+      `<div class="hint">WASD thrust · SPACE shove · SHIFT tether</div>`;
+    document.getElementById('startbtn').onclick = () => {
+      lobbyScreen = 'sides';
+      renderOverlay();
+    };
+    return;
+  }
+
+  panel.innerHTML =
+    `<h1>PICK A SIDE</h1>` +
+    `<div class="tag">left jaws are Greek, right jaws are Norse</div>` +
+    `<div class="sides">` +
+      `<button class="norse" data-team="0">NORSE</button>` +
+      `<button class="greek" data-team="1">GREEK</button>` +
+    `</div>` +
+    `<div class="count">${sideCounts[0]} norse · ${sideCounts[1]} greek</div>`;
+  for (const b of panel.querySelectorAll('[data-team]')) {
+    b.onclick = () => send({ t: 'pick', team: Number(b.dataset.team) });
+  }
+}
+
 function readKeys() {
   let ax = 0, ay = 0;
   if (keys.has('a') || keys.has('arrowleft')) ax -= 1;
@@ -295,6 +353,8 @@ function readKeys() {
  */
 function localTick() {
   if (myId === null || !haveClock || !predictor) return;
+  // No body, no inputs. A player in the lobby is a spectator.
+  if (myTeam < 0) return;
   const tick = ++predTick;
   let { ax, ay } = readKeys();
   // One shove per press, not one per tick the bar is held down.
@@ -619,7 +679,10 @@ function draw(now) {
     ctx.stroke();
   }
 
-  const me = predictionOn ? predictor?.body : serverMe;
+  // The predictor always owns a body so it has something to simulate, but a
+  // player in the lobby has no body on the server. Drawing the local one put a
+  // ghost player in the middle of the arena before anyone had picked a side.
+  const me = myTeam < 0 ? null : (predictionOn ? predictor?.body : serverMe);
   if (me) {
     const r = me.radius ?? me.r;
     drawTrail(me, 'rgba(127,227,192,ALPHA)');
@@ -653,13 +716,16 @@ function draw(now) {
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  renderOverlay();
+
   scoreboard.innerHTML =
     `<span class="norse">NORSE <b>${score[0]}</b></span>` +
     `<span style="opacity:.4">   ·   </span>` +
     `<span class="greek"><b>${score[1]}</b> GREEK</span>`;
 
   hud.innerHTML =
-    `orrery  <b>you are ${myId ?? '...'}</b> (${TEAM_NAME[myTeam]})\n` +
+    `orrery  <b>you are ${myId ?? '...'}</b> ` +
+    `(${myTeam >= 0 ? TEAM_NAME[myTeam] : 'lobby'})   phase ${phase}\n` +
     `server tick ${serverTick}   client tick ${predTick}   lead ${predTick - serverTick}\n` +
     `rtt ${rttMs.toFixed(0)}ms   fake lag ${fakeLagMs}ms   missed on server ${missedOnServer}\n` +
     `prediction ${predictionOn ? '<b>on</b>' : '<span id="warn">off</span>'}` +

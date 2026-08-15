@@ -59,7 +59,6 @@ public final class Messages {
             @JsonProperty("maxSpeed") double maxSpeed,
             @JsonProperty("restitution") double restitution,
             @JsonProperty("bodyRestitution") double bodyRestitution,
-            @JsonProperty("team") int team,
             @JsonProperty("jaws") double jaws,
             @JsonProperty("shoveRange") double shoveRange,
             @JsonProperty("shoveImpulse") double shoveImpulse,
@@ -68,10 +67,10 @@ public final class Messages {
             @JsonProperty("tetherMax") double tetherMax) {
         public static Welcome of(int id, double w, double h, int hz,
                 double thrust, double maxSpeed, double restitution, double bodyRestitution,
-                int team, double jaws, double shoveRange, double shoveImpulse,
+                double jaws, double shoveRange, double shoveImpulse,
                 int shoveCooldown, double tetherReach, double tetherMax) {
             return new Welcome("welcome", id, w, h, hz, thrust, maxSpeed,
-                    restitution, bodyRestitution, team, jaws,
+                    restitution, bodyRestitution, jaws,
                     shoveRange, shoveImpulse, shoveCooldown, tetherReach, tetherMax);
         }
     }
@@ -116,14 +115,22 @@ public final class Messages {
             @JsonProperty("scoreB") int scoreB,
             @JsonProperty("freeze") int freeze,
             @JsonProperty("ready") long ready,
+            /** lobby, countdown, playing. What the client should be showing. */
+            @JsonProperty("phase") String phase,
+            /** Ticks left of the countdown, 0 unless the phase is countdown. */
+            @JsonProperty("countdown") int countdown,
+            /** How many people have taken each side. */
+            @JsonProperty("norse") int norse,
+            @JsonProperty("greek") int greek,
             /** -1 while a match is running, else the team that just won it. */
             @JsonProperty("winner") int winner,
             @JsonProperty("bodies") List<BodyState> bodies) {
         public static Snapshot of(long tick, long ack, long missed,
-                int scoreA, int scoreB, int freeze, long ready, int winner,
+                int scoreA, int scoreB, int freeze, long ready, String phase,
+                int countdown, int norse, int greek, int winner,
                 List<BodyState> bodies) {
             return new Snapshot("state", tick, ack, missed, scoreA, scoreB,
-                    freeze, ready, winner, bodies);
+                    freeze, ready, phase, countdown, norse, greek, winner, bodies);
         }
     }
 }

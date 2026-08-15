@@ -79,6 +79,8 @@ Two reasons, in order:
 - [x] A bot opponent, so one person opening the link gets a game
 - [x] Look: trails, thruster plume, impact flashes, star pulse, split scoreboard
 - [x] ?auto=1 autopilot, for demos and for taking screenshots of live play
+- [x] Lobby: start screen, pick a side, five second countdown, then kick off.
+      Teams are chosen rather than assigned by join order
 - [ ] Sound
 - [x] CI: GitHub Actions runs the tests, the drift check and the prediction
       check on every push. The browser check skips cleanly without Chrome

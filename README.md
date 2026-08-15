@@ -12,6 +12,11 @@ prediction. Norse against Greek.
 ./verify.sh       # tests, physics drift, live prediction, real browser
 ```
 
+Press START, take a side, and the match begins after a five second countdown.
+A player who has not picked a side has no body at all, which is what makes
+spectating free: a connection without a team is simply a connection without a
+body.
+
 Controls: **WASD** thrust, **SPACE** shove, **SHIFT** tether.
 Debug: **P** toggles prediction, **L** adds fake lag, **G** shows the server's
 ghost. Add `?auto=1` and the page plays itself, which is how the screenshots are

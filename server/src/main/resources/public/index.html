@@ -20,12 +20,35 @@
          text-shadow: 0 1px 2px #000; }
   #hud b { color: #7fe3c0; font-weight: 600; }
   #warn { color: #e8b04b; }
+
+  /* The lobby sits over the arena, which keeps running behind it. Watching the
+     star drift while you choose a side is better than a blank screen, and it
+     also means the connection is visibly alive before you commit to anything. */
+  #overlay { position: fixed; inset: 0; display: none; place-items: center;
+             background: radial-gradient(circle at 50% 45%, rgba(5,7,13,.55), rgba(5,7,13,.9)); }
+  #overlay.show { display: grid; }
+  #panel { text-align: center; }
+  #panel h1 { margin: 0 0 6px; font-size: 46px; letter-spacing: 10px; font-weight: 300;
+              color: #ffe9b0; text-shadow: 0 0 28px rgba(255,196,90,.35); }
+  #panel .tag { color: #7c8798; margin-bottom: 30px; letter-spacing: 1px; }
+  button { font: inherit; letter-spacing: 2px; color: #cfd6e4; cursor: pointer;
+           background: transparent; border: 1px solid #2a3752; border-radius: 3px;
+           padding: 12px 30px; transition: border-color .15s, color .15s; }
+  button:hover { border-color: #7fe3c0; color: #7fe3c0; }
+  .sides { display: flex; gap: 16px; justify-content: center; }
+  .sides button.norse:hover { border-color: #7fa8e3; color: #7fa8e3; }
+  .sides button.greek:hover { border-color: #e0b062; color: #e0b062; }
+  .count { font-size: 12px; color: #7c8798; margin-top: 10px; letter-spacing: 1px; }
+  #countdown { font-size: 96px; font-weight: 200; color: #ffe9b0;
+               text-shadow: 0 0 40px rgba(255,196,90,.4); }
+  .hint { color: #7c8798; font-size: 12px; margin-top: 26px; letter-spacing: .5px; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="score"></div>
 <div id="hud"></div>
+<div id="overlay"><div id="panel"></div></div>
 <script type="module" src="./game.mjs"></script>
 </body>
 </html>

@@ -15,7 +15,9 @@
 import { Predictor } from '../server/src/main/resources/public/predictor.mjs';
 
 const url = process.argv[2] ?? 'ws://localhost:7070/ws';
-const SECONDS = 9;
+// Nine seconds of play, plus the five second countdown that now precedes every
+// match, plus a moment to connect.
+const SECONDS = 15;
 
 // A body is 1.6 units across. A tenth of a unit is invisible on screen but far
 // larger than floating point noise, so this catches systematic error only.
@@ -76,12 +78,22 @@ ws.addEventListener('message', ev => {
     cfg.tetherReach = m.tetherReach;
     cfg.tetherMax = m.tetherMax;
     predictor = new Predictor(cfg, myId, { x: cfg.w / 2, y: cfg.h / 2, r: 1.6 });
+    // Players start in the lobby with no body, so the checker has to take a
+    // side like anyone else.
+    ws.send(JSON.stringify({ t: 'pick', team: 1 }));
     return;
   }
 
   if (m.t !== 'state' || !predictor) return;
   const truth = m.bodies.find(b => b.id === myId);
   if (!truth) return;
+  // The five second countdown is a pause the client cannot predict its way out
+  // of; nothing moves and nothing is worth measuring until the kick.
+  if (m.phase !== 'playing') { lastServerTick = m.tick; return; }
+  // The movement cycle starts at kick off, not at connect. Otherwise the first
+  // approach phase is spent during the countdown, when nothing moves, and the
+  // run can finish without ever reaching the star.
+  if (playFrom === 0) playFrom = Date.now();
 
   snapshots++;
   lastServerTick = m.tick;
@@ -194,10 +206,11 @@ function intent(t) {
   return { ...toStar, mayShove: false, tether: false };
 }
 
-const started = Date.now();
+let playFrom = 0;
 function emitTick() {
   const tick = ++predTick;
-  const { ax, ay, mayShove, tether } = intent(Date.now() - started);
+  if (playFrom === 0) return;
+  const { ax, ay, mayShove, tether } = intent(Date.now() - playFrom);
   const sh = mayShove && tick >= predictor.shoveReadyTick;
   const th = !!tether;
   if (predictor.anchor) tetheredTicks++;
