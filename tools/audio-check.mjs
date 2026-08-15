@@ -22,7 +22,7 @@
 // Usage: node tools/audio-check.mjs [url]
 
 import { spawn } from 'node:child_process';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,11 @@ const PUBLIC = join(ROOT, 'server/src/main/resources/public');
 
 const CHROME = process.env.CHROME
   ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
+// Without a browser this can still do the static half, and saying so is better
+// than either crashing or passing silently. client-check.sh skips the same way
+// and for the same reason.
+const HAVE_CHROME = existsSync(CHROME);
 
 function fail(why) {
   console.log(`audio-check: FAILED — ${why}`);
@@ -58,6 +63,12 @@ if (!called.size) fail('game.mjs does not call the sound layer at all');
 
 // ---------------------------------------------------------------------------
 // Live half.
+
+if (!HAVE_CHROME) {
+  console.log(`audio-check: ${called.size} call sites checked against the class, all defined`);
+  console.log(`audio-check: SKIPPED the rendered half (no Chrome at ${CHROME})`);
+  process.exit(0);
+}
 
 const PORT = 9222 + Math.floor(process.pid % 500);
 const profile = mkdtempSync(join(tmpdir(), 'orrery-audio-'));

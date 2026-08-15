@@ -33,7 +33,7 @@ fail() { echo "client-check: FAILED — $1"; exit 1; }
 # Each launch gets its own profile directory. Sharing the default one means a
 # second Chrome started while the first is still shutting down simply exits, and
 # the check then reports a product failure that is really a profile lock.
-profile_root=$(mktemp -d -t orrery-chrome)
+profile_root=$(mktemp -d "${TMPDIR:-/tmp}/orrery-chrome.XXXXXX")
 trap 'rm -rf "$profile_root"; pkill -f "user-data-dir=$profile_root" 2>/dev/null || true' EXIT
 
 # Chrome is run with a hard deadline and killed if it overruns. Without this a

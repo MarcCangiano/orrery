@@ -44,6 +44,8 @@ jobs:
             sleep 1
           done
           node tools/predict-check.mjs ws://localhost:7070/ws
+          node tools/spectator-check.mjs ws://localhost:7070/ws
+          node tools/leave-check.mjs ws://localhost:7070/ws
           pkill -f dev.cangiano.orrery.Main || true
 
       # tools/client-check.sh needs a browser and skips cleanly without one, so
