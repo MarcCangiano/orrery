@@ -108,6 +108,7 @@ let shoveReady = 0;
 const bodyTeam = new Map();
 const bodyTether = new Map();
 let shoveHeld = false;
+let cameraFollows = true;
 let score = [0, 0];
 let freeze = 0;
 let winner = -1;
@@ -134,6 +135,7 @@ addEventListener('keydown', e => {
   if (k === ' ') { shoveHeld = true; e.preventDefault(); return; }
   if (k === 'p') { predictionOn = !predictionOn; return; }
   if (k === 'g') { ghostOn = !ghostOn; return; }
+  if (k === 'c') { cameraFollows = renderer3d?.toggleFollow() ?? cameraFollows; return; }
   if (k === 'l') { fakeLagMs = fakeLagMs === 0 ? 100 : fakeLagMs === 100 ? 300 : 0; return; }
   keys.add(k);
 });
@@ -888,7 +890,8 @@ function drawHud() {
     `correction ${correctionError.toFixed(4)}  worst ${worstCorrection.toFixed(4)}\n` +
     `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
         Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
-    `WASD thrust   SPACE shove   SHIFT tether   P prediction   L lag   G ghost` +
+    `WASD thrust   SPACE shove   SHIFT tether   C camera ${cameraFollows ? 'follow' : 'wide'}` +
+    `   P prediction   L lag   G ghost` +
     (AUTOPILOT ? '   <b>autopilot</b>' : '') +
     (connected ? '' : '\n<span id="warn">disconnected, reconnecting</span>');
 
