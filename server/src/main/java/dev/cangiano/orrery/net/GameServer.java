@@ -106,7 +106,8 @@ public final class GameServer {
                 }
 
                 ctx.send(write(Messages.Welcome.of(id, ARENA_W, ARENA_H, TICK_HZ,
-                        THRUST, World.MAX_SPEED, World.WALL_RESTITUTION)));
+                        THRUST, World.MAX_SPEED, World.WALL_RESTITUTION,
+                        World.BODY_RESTITUTION)));
                 System.out.printf("player %d connected (%d online)%n", id, players.size());
             });
 

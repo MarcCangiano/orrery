@@ -51,10 +51,12 @@ public final class Messages {
             @JsonProperty("hz") int hz,
             @JsonProperty("thrust") double thrust,
             @JsonProperty("maxSpeed") double maxSpeed,
-            @JsonProperty("restitution") double restitution) {
+            @JsonProperty("restitution") double restitution,
+            @JsonProperty("bodyRestitution") double bodyRestitution) {
         public static Welcome of(int id, double w, double h, int hz,
-                double thrust, double maxSpeed, double restitution) {
-            return new Welcome("welcome", id, w, h, hz, thrust, maxSpeed, restitution);
+                double thrust, double maxSpeed, double restitution, double bodyRestitution) {
+            return new Welcome("welcome", id, w, h, hz, thrust, maxSpeed,
+                    restitution, bodyRestitution);
         }
     }
 

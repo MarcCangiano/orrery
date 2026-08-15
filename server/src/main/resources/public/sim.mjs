@@ -55,6 +55,7 @@ export class World {
     this.height = height;
     this.maxSpeed = opts.maxSpeed ?? 40.0;
     this.wallRestitution = opts.wallRestitution ?? 0.75;
+    this.bodyRestitution = opts.bodyRestitution ?? 0.9;
     this.bodies = [];
   }
 
@@ -77,6 +78,57 @@ export class World {
       b.y += b.vy * dt;
       this.bounceOffWalls(b);
     }
+    this.resolveCollisions();
+  }
+
+  // One pass, in insertion order. Not iterated to convergence on purpose: the
+  // same answer every time matters more here than the most accurate answer,
+  // because the server runs this too.
+  resolveCollisions() {
+    const n = this.bodies.length;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        this.collide(this.bodies[i], this.bodies[j]);
+      }
+    }
+  }
+
+  collide(a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    let dist = Math.sqrt(dx * dx + dy * dy);
+    const minDist = a.radius + b.radius;
+    if (dist >= minDist) return;
+
+    let nx, ny;
+    if (dist === 0) {
+      nx = a.id < b.id ? 1 : -1;
+      ny = 0;
+      dist = minDist;
+    } else {
+      nx = dx / dist;
+      ny = dy / dist;
+    }
+
+    const invA = 1.0 / a.mass;
+    const invB = 1.0 / b.mass;
+    const overlap = minDist - dist;
+    const share = overlap / (invA + invB);
+    a.x -= nx * share * invA;
+    a.y -= ny * share * invA;
+    b.x += nx * share * invB;
+    b.y += ny * share * invB;
+
+    const rvx = b.vx - a.vx;
+    const rvy = b.vy - a.vy;
+    const along = rvx * nx + rvy * ny;
+    if (along > 0) return;
+
+    const impulse = -(1 + this.bodyRestitution) * along / (invA + invB);
+    a.vx -= impulse * nx * invA;
+    a.vy -= impulse * ny * invA;
+    b.vx += impulse * nx * invB;
+    b.vy += impulse * ny * invB;
   }
 
   bounceOffWalls(b) {

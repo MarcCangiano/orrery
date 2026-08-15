@@ -34,24 +34,34 @@ public final class DriftFixture {
      * long enough to hit the speed cap, and drives into walls on both axes.
      */
     public static double ax(int tick) {
-        if (tick < 120) return 1;
-        if (tick < 200) return -1;
-        if (tick < 260) return 0;
-        if (tick < 400) return 0.5;
-        return -0.25;
+        // Aimed at the star for the opening stretch, because a fixture where the
+        // bodies never touch tests the collision code not at all. drift-check
+        // fails outright if this stops producing contact.
+        // Lined up with the star and driving straight at it. It bounces off,
+        // gets pushed back in, and does it again: several separate contacts
+        // rather than one glancing pass.
+        if (tick < 300) return 1;
+        if (tick < 380) return -1;
+        return 1;
     }
 
     public static double ay(int tick) {
-        if (tick < 60) return 0;
-        if (tick < 180) return -1;
-        if (tick < 300) return 1;
-        if (tick < 420) return -0.75;
+        // Small vertical wander so contacts are off-centre and the impulse has
+        // to resolve on both axes, plus a wall visit.
+        if (tick < 150) return 0;
+        if (tick < 240) return -0.4;
+        if (tick < 330) return 0.6;
         return 0;
     }
 
+    /** A heavy second body, so the run exercises collisions and not only walls. */
+    public static final double STAR_RADIUS = 2.4;
+    public static final double STAR_MASS = 4.0;
+
     public static void main(String[] args) {
         World world = new World(W, H);
-        Body body = world.add(new Body(1, 12.5, 7.25, RADIUS, MASS));
+        Body body = world.add(new Body(1, 12.5, H / 2, RADIUS, MASS));
+        Body star = world.add(new Body(2, W / 2, H / 2, STAR_RADIUS, STAR_MASS));
         double dt = 1.0 / HZ;
 
         StringBuilder out = new StringBuilder(1 << 16);
@@ -64,7 +74,14 @@ public final class DriftFixture {
         out.append("  \"height\": ").append(Double.toString(H)).append(",\n");
         out.append("  \"radius\": ").append(Double.toString(RADIUS)).append(",\n");
         out.append("  \"mass\": ").append(Double.toString(MASS)).append(",\n");
-        out.append("  \"start\": { \"x\": 12.5, \"y\": 7.25 },\n");
+        out.append("  \"start\": { \"x\": 12.5, \"y\": ")
+                .append(Double.toString(H / 2)).append(" },\n");
+        out.append("  \"star\": { \"x\": ").append(Double.toString(W / 2))
+                .append(", \"y\": ").append(Double.toString(H / 2))
+                .append(", \"r\": ").append(Double.toString(STAR_RADIUS))
+                .append(", \"m\": ").append(Double.toString(STAR_MASS)).append(" },\n");
+        out.append("  \"bodyRestitution\": ")
+                .append(Double.toString(World.BODY_RESTITUTION)).append(",\n");
         out.append("  \"ticks\": [\n");
 
         for (int tick = 0; tick < TICKS; tick++) {
@@ -74,6 +91,10 @@ public final class DriftFixture {
                     .append(", \"y\": ").append(Double.toString(body.y))
                     .append(", \"vx\": ").append(Double.toString(body.vx))
                     .append(", \"vy\": ").append(Double.toString(body.vy))
+                    .append(", \"sx\": ").append(Double.toString(star.x))
+                    .append(", \"sy\": ").append(Double.toString(star.y))
+                    .append(", \"svx\": ").append(Double.toString(star.vx))
+                    .append(", \"svy\": ").append(Double.toString(star.vy))
                     .append("}");
             out.append(tick == TICKS - 1 ? "\n" : ",\n");
         }

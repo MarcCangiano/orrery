@@ -25,6 +25,13 @@ public final class World {
     /** How much speed survives a wall bounce. Below 1 so a wall is a mistake, not a trampoline. */
     public static final double WALL_RESTITUTION = 0.75;
 
+    /**
+     * How much speed survives a body-to-body hit. Higher than the wall, because
+     * bouncing off another god should feel like an event and bouncing off the
+     * cage should feel like a mistake.
+     */
+    public static final double BODY_RESTITUTION = 0.9;
+
     public final double width;
     public final double height;
 
@@ -72,6 +79,77 @@ public final class World {
             b.y += b.vy * dt;
             bounceOffWalls(b);
         }
+        resolveCollisions();
+    }
+
+    /**
+     * One pass of pair collisions, in insertion order.
+     *
+     * <p>Deliberately a single pass rather than iterating to convergence. One
+     * pass is not the most physically accurate answer when three bodies pile
+     * up, and it is the same answer every time, which matters more: the browser
+     * runs this too, and "mostly converged" is not a reproducible state.
+     *
+     * <p>O(n^2) over the whole arena. With a dozen bodies that is nothing. If
+     * this ever holds hundreds, it wants a spatial grid, not a cleverer loop.
+     */
+    private void resolveCollisions() {
+        int n = bodies.size();
+        for (int i = 0; i < n; i++) {
+            for (int j = i + 1; j < n; j++) {
+                collide(bodies.get(i), bodies.get(j));
+            }
+        }
+    }
+
+    private void collide(Body a, Body b) {
+        double dx = b.x - a.x;
+        double dy = b.y - a.y;
+        double dist = Math.sqrt(dx * dx + dy * dy);
+        double minDist = a.radius + b.radius;
+        if (dist >= minDist) {
+            return;
+        }
+
+        double nx;
+        double ny;
+        if (dist == 0) {
+            // Exactly concentric. Pick a direction from the ids so both
+            // runtimes pick the same one instead of dividing by zero.
+            nx = a.id < b.id ? 1 : -1;
+            ny = 0;
+            dist = minDist;
+        } else {
+            nx = dx / dist;
+            ny = dy / dist;
+        }
+
+        // Push them apart by inverse mass, so a light body does most of the
+        // moving. Without this they sink into each other and the impulse below
+        // fires every tick.
+        double invA = 1.0 / a.mass;
+        double invB = 1.0 / b.mass;
+        double overlap = minDist - dist;
+        double share = overlap / (invA + invB);
+        a.x -= nx * share * invA;
+        a.y -= ny * share * invA;
+        b.x += nx * share * invB;
+        b.y += ny * share * invB;
+
+        double rvx = b.vx - a.vx;
+        double rvy = b.vy - a.vy;
+        double along = rvx * nx + rvy * ny;
+        if (along > 0) {
+            // Already separating. Applying an impulse now would suck them back
+            // together, which reads as a magnet rather than a collision.
+            return;
+        }
+
+        double impulse = -(1 + BODY_RESTITUTION) * along / (invA + invB);
+        a.vx -= impulse * nx * invA;
+        a.vy -= impulse * ny * invA;
+        b.vx += impulse * nx * invB;
+        b.vy += impulse * ny * invB;
     }
 
     private void bounceOffWalls(Body b) {
