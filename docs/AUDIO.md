@@ -67,10 +67,23 @@ that the change is noticeable. Tracks crossfade four seconds before the end;
 
 Three things the generator does that are not obvious:
 
-**It trims the dead tail.** Asked for 110 seconds, the model returns 110 seconds
-but stops having ideas earlier — norse-1 went quiet with twenty seconds left.
-Trailing quiet is detected and cut so the fade lands on the last real note.
-Quiet passages in the middle are left alone; those are the arrangement.
+**It trims both ends.** The model writes an intro and an outro whether or not it
+was asked for one, and both are wrong here. The intro is wrong because the bed
+starts the moment somebody presses START and has to be going already; the outro
+is wrong because it is dead air in the middle of a match. Asked for 110 seconds
+it returns 110 seconds but stops having ideas before then — norse-1 went quiet
+with twenty seconds left.
+
+The head is the harder end, and the trick is that what counts as started is
+*sustained* energy, not loud energy. lobby-1 opens at 155% of its own busy level
+and still had to be cut twenty seconds: it is a big hit, four seconds of near
+silence, another big hit, and it does not become continuous music until 21s.
+Measuring the peak said it started at 0s. Measuring the floor over the following
+six seconds says 21s, which is where a listener would say it starts — and
+cutting to there is also what removed the booming-with-gaps opening.
+
+Quiet passages in the middle are left alone; those are the arrangement. Only a
+trailing quiet run that reaches the end of the file counts as an outro.
 
 **It normalises loudness.** Every track is brought to -18 LUFS. Without this the
 playlist gets louder and softer as it cycles. It was -23, which is broadcast

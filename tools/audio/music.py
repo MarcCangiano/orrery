@@ -19,11 +19,13 @@ away from what a player is meant to be listening to, which here is the shove
 cue and the countdown.
 """
 
+import audioop
 import json
 import pathlib
 import subprocess
 import sys
 import time
+import wave
 
 import requests
 
@@ -185,11 +187,18 @@ def content_start(src: pathlib.Path, window: float = 0.5) -> float:
     for a bed that begins the moment you press START. So the quiet run-up is cut
     and the track starts where it is already at full strength.
 
-    Full strength is measured as a fraction of the track's own busy level rather
-    than an absolute, because these are normalised later and the numbers here
-    are arbitrary until then. The sustain requirement matters: without it the
-    start lands on the first loud hit of a sparse intro rather than on the point
-    where the music is continuously going.
+    What counts as started is SUSTAINED energy, not loud energy, and the
+    difference is the whole point. lobby-1 opens at 155% of its own busy level
+    and still had to be cut: it is a big hit, four seconds of near silence,
+    another big hit, and it does not become continuous music until 21 seconds
+    in. Measuring the peak said "started at 0s". Measuring the floor over the
+    next six seconds says 21s, which is where a listener would say it starts,
+    and cutting to there removes the booming-with-gaps opening that got
+    described as banging.
+
+    Full strength is a fraction of the track's own busy level rather than an
+    absolute, because these are normalised afterwards and the numbers here are
+    arbitrary until then.
     """
     levels = envelope(src, window)
     if not levels:
@@ -198,12 +207,13 @@ def content_start(src: pathlib.Path, window: float = 0.5) -> float:
     if busy <= 0:
         return 0.0
 
-    need = busy * 0.6
     hold = busy * 0.45
-    for i in range(len(levels) - 4):
-        if levels[i] >= need and all(v >= hold for v in levels[i + 1:i + 5]):
+    span = max(2, int(round(6.0 / window)))     # six seconds of it
+    for i in range(len(levels) - span):
+        if min(levels[i:i + span]) >= hold:
             # Back off half a window so the first beat is not clipped off.
             return max(0.0, (i * window) - window / 2)
+    # Nothing sustained anywhere. Better to ship the whole track than to guess.
     return 0.0
 
 
@@ -245,23 +255,39 @@ def content_end(src: pathlib.Path, seconds: float) -> float:
 def encode(src: pathlib.Path, dest: pathlib.Path, seconds: float) -> None:
     """PCM to a small, quiet, consistently loud MP3.
 
-    The two filters both matter. loudnorm makes every track sit at the same
-    level, without which the playlist gets louder and quieter as it cycles and
-    a player reaches for the volume. The fades hide the wrap: the model does not
-    produce a seamless loop, and two seconds of fade at each end turns an
-    audible edit into a breath.
+    Both ends are cut. The model writes an intro and an outro whether or not it
+    was asked for one, and both are wrong here: the intro because the bed starts
+    the moment somebody presses START and has to be going already, the outro
+    because it is dead air in the middle of a match. What is kept is the part
+    where the track is actually playing.
+
+    The filters both matter too. loudnorm makes every track sit at the same
+    level, without which the playlist gets louder and quieter as it cycles and a
+    player reaches for the volume. The fades hide the wrap, since the model does
+    not produce a seamless loop.
     """
+    start = content_start(src)
     end = content_end(src, seconds)
+    span = max(5.0, end - start)
     subprocess.run([
-        "ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-t", f"{end:.2f}",
+        "ffmpeg", "-y", "-loglevel", "error",
+        # -ss before -i so the decoder seeks rather than decoding and throwing
+        # away, which on a two minute file is the difference between instant
+        # and not.
+        "-ss", f"{start:.2f}", "-i", str(src), "-t", f"{span:.2f}",
         "-af", (f"loudnorm=I={LUFS}:TP=-2:LRA=11,"
                 f"afade=t=in:st=0:d={FADE_IN},"
-                f"afade=t=out:st={max(0.0, end - FADE_OUT):.2f}:d={FADE_OUT}"),
+                f"afade=t=out:st={max(0.0, span - FADE_OUT):.2f}:d={FADE_OUT}"),
         "-c:a", "libmp3lame", "-b:a", BITRATE, "-ac", "2",
         str(dest),
     ], check=True)
+    cuts = []
+    if start > 0.5:
+        cuts.append(f"{start:.0f}s of intro")
     if end < seconds - 1:
-        print(f"    trimmed {seconds - end:.0f}s of dead tail")
+        cuts.append(f"{seconds - end:.0f}s of dead tail")
+    if cuts:
+        print(f"    trimmed {' and '.join(cuts)}")
 
 
 def generate(name: str, spec: dict, headers: dict) -> pathlib.Path:
