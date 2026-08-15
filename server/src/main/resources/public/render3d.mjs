@@ -16,7 +16,6 @@
 // that will still run on a machine with no working WebGL.
 
 import * as THREE from './vendor/three.module.js';
-import { GLTFLoader } from './vendor/GLTFLoader.js';
 
 const TEAM_COLOR = [0x7fa8e3, 0xe0b062];
 
@@ -164,27 +163,13 @@ export class Renderer3D {
     this.sphere = new THREE.SphereGeometry(1, 32, 24);
 
     /*
-     * The gods themselves.
+     * Bodies are spheres, by choice.
      *
-     * <p>The collision shape is and stays a circle: everything the server
-     * resolves is circle against circle. A figure is therefore drawn INSIDE that
-     * circle, scaled by height rather than by width so it never grows a
-     * silhouette wider than it can be hit at, and the circle itself is drawn on
-     * the deck underneath in the team's colour so the hitbox is visible rather
-     * than implied.
-     *
-     * <p>Loaded lazily and used the moment they arrive. A body that has no model
-     * yet, or a machine where the load fails, keeps the sphere: the game must
-     * not wait on four megabytes of mesh to be playable.
+     * Generated god meshes were built, wired in, and taken out again: they read
+     * as noise at the distance this is played from, and the game is clearer with
+     * a ball whose colour tells you whose it is. tools/art/model3d.py still
+     * makes them if that judgement ever changes.
      */
-    this.models = { 0: null, 1: null };
-    const loader = new GLTFLoader();
-    for (const [team, file] of [[0, 'player-norse'], [1, 'player-greek']]) {
-      loader.load(`./models/${file}.glb`,
-        gltf => { this.models[team] = this.prepareModel(gltf.scene, team); },
-        undefined,
-        err => console.warn(`model ${file} unavailable, using a sphere`, err));
-    }
 
     // A soft halo that always faces the camera, so the star reads as something
     // burning rather than as a lit ball. Cheaper and steadier than bloom.
@@ -198,51 +183,6 @@ export class Renderer3D {
     }));
     this.halo.scale.setScalar(26);
     this.scene.add(this.halo);
-  }
-
-  /**
-   * Stand a generated mesh up, centre it, and size it to the arena.
-   *
-   * <p>These arrive Y-up, off-centre, and in whatever units the generator felt
-   * like. The scene is Z-up, so everything is rotated a quarter turn, dropped
-   * so its feet sit on the deck, and scaled by HEIGHT to about two and a half
-   * collision radii, which is a figure that reads at this camera distance
-   * without covering the star.
-   */
-  prepareModel(scene, team) {
-    const root = new THREE.Group();
-    const box = new THREE.Box3().setFromObject(scene);
-    const size = box.getSize(new THREE.Vector3());
-    const centre = box.getCenter(new THREE.Vector3());
-
-    // Centre on X and Z, and put the feet at zero rather than the middle.
-    scene.position.set(-centre.x, -box.min.y, -centre.z);
-
-    const wrapper = new THREE.Group();
-    wrapper.add(scene);
-    wrapper.rotation.x = Math.PI / 2;      // Y-up mesh into a Z-up world
-    // Four units put a god at about twenty pixels of dark grey on a dark deck,
-    // which is indistinguishable from nothing. Seven is roughly twice the
-    // collision diameter, which is a human proportion and reads from across the
-    // arena. The footprint stays narrower than the circle it collides on.
-    const targetHeight = 7.0;
-    wrapper.scale.setScalar(targetHeight / (size.y || 1));
-    root.add(wrapper);
-
-    root.traverse(node => {
-      if (!node.isMesh) return;
-      node.castShadow = true;
-      node.receiveShadow = false;
-      // Tinted toward the team so a Norse god and a Greek god differ at a
-      // glance as well as in silhouette.
-      if (node.material) {
-        node.material = node.material.clone();
-        node.material.color.multiply(new THREE.Color(BODY_TINT[team]));
-        node.material.emissive = new THREE.Color(TEAM_COLOR[team]);
-        node.material.emissiveIntensity = 0.34;
-      }
-    });
-    return root;
   }
 
   /**
@@ -537,19 +477,14 @@ export class Renderer3D {
      * idea before there were figures to stand in it.
      */
     if (b.id >= 0 && (b.team === 0 || b.team === 1)) {
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.86, 1.0, 40),
-        new THREE.MeshBasicMaterial({
-          color: TEAM_COLOR[b.team],
-          transparent: true,
-          opacity: 0.9,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      );
-      ring.name = 'deckring';
-      this.scene.add(ring);
-      mesh.userData.ring = ring;
+      const rim = new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({
+        color: TEAM_COLOR[b.team],
+        side: THREE.BackSide,
+        transparent: true,
+        opacity: 0.85,
+      }));
+      rim.scale.setScalar(1.2);
+      mesh.add(rim);
       mesh.userData.team = b.team;
     }
 
@@ -655,33 +590,6 @@ export class Renderer3D {
       mesh.position.set(b.x, this.mapY(b.y), b.r);
       mesh.scale.setScalar(b.r);
 
-      // A player whose model has arrived swaps the sphere for the figure. The
-      // sphere is hidden rather than removed, so a failed load is survivable and
-      // so is a player joining before the mesh finishes downloading.
-      const team = mesh.userData.team;
-      if (team !== undefined && this.models[team] && !mesh.userData.figure) {
-        const figure = this.models[team].clone(true);
-        figure.name = 'figure';
-        this.scene.add(figure);
-        mesh.userData.figure = figure;
-        mesh.visible = false;
-      }
-      const figure = mesh.userData.figure;
-      if (figure) {
-        figure.position.set(b.x, this.mapY(b.y), 0);
-        // Face the way it is travelling. Y is mirrored for the screen, so the
-        // heading is mirrored with it, and the model's own forward is a quarter
-        // turn off from the world's.
-        const speed = Math.hypot(b.vx ?? 0, b.vy ?? 0);
-        if (speed > 1.5) {
-          figure.rotation.z = Math.atan2(-(b.vy ?? 0), b.vx ?? 0) - Math.PI / 2;
-        }
-      }
-      const ring = mesh.userData.ring;
-      if (ring) {
-        ring.position.set(b.x, this.mapY(b.y), 0.05);
-        ring.scale.setScalar(b.r);
-      }
 
       if (b.id === -1) {
         this.starLight.position.set(b.x, this.mapY(b.y), b.r * 2.2);
@@ -699,8 +607,6 @@ export class Renderer3D {
     for (const [id, mesh] of this.bodies) {
       if (!seen.has(id)) {
         this.scene.remove(mesh);
-        if (mesh.userData.ring) this.scene.remove(mesh.userData.ring);
-        if (mesh.userData.figure) this.scene.remove(mesh.userData.figure);
         mesh.material.dispose();
         this.bodies.delete(id);
       }
