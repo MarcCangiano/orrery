@@ -6,7 +6,8 @@
 <style>
   html, body { margin: 0; height: 100%; background: #05070d; color: #cfd6e4;
                font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace; overflow: hidden; }
-  canvas { display: block; }
+  canvas { display: block; position: fixed; inset: 0; }
+  canvas.hidden { display: none; }
   /* Score at the top middle where a scoreboard belongs; the debug readout down
      in the corner, small and quiet, where it does not sit on the arena. */
   #score { position: fixed; top: 14px; left: 0; right: 0; text-align: center;
@@ -45,6 +46,11 @@
 </style>
 </head>
 <body>
+<!-- Two canvases, because a canvas only ever gets one kind of context. Asking
+     for 2D at load, as this file used to, permanently prevents WebGL from
+     attaching to the same element, and the 3D renderer failed with a warning
+     nobody was reading. -->
+<canvas id="c3d" class="hidden"></canvas>
 <canvas id="c"></canvas>
 <div id="score"></div>
 <div id="hud"></div>

@@ -27,7 +27,22 @@
 
 import { Predictor } from './predictor.mjs';
 
+/*
+ * Two renderers, one simulation.
+ *
+ * The 3D one is the default because the star being the only light in the arena
+ * is the idea the whole game is built on, and in 2D that can only ever be drawn
+ * as a gradient. ?flat=1 keeps the canvas version, which stays in the tree
+ * because it is the one that still works on a machine whose WebGL does not.
+ *
+ * Neither of them can touch the simulation. Rendering reads the body list and
+ * nothing else.
+ */
+const FLAT = new URLSearchParams(location.search).get('flat') === '1';
+let renderer3d = null;
+
 const canvas = document.getElementById('c');
+const canvas3d = document.getElementById('c3d');
 const ctx = canvas.getContext('2d');
 const hud = document.getElementById('hud');
 const scoreboard = document.getElementById('score');
@@ -122,6 +137,10 @@ addEventListener('keyup', e => {
 });
 
 function resize() {
+  if (renderer3d) {
+    renderer3d.resize(innerWidth, innerHeight);
+    return;
+  }
   canvas.width = innerWidth * devicePixelRatio;
   canvas.height = innerHeight * devicePixelRatio;
   canvas.style.width = innerWidth + 'px';
@@ -200,6 +219,20 @@ function handle(raw) {
     });
 
     predictor = new Predictor(cfg, myId, { x: cfg.w / 2, y: cfg.h / 2, r: 1.6 });
+    // The 3D renderer needs the arena size, which only arrives with the welcome.
+    if (!FLAT && !renderer3d) {
+      import('./render3d.mjs')
+        .then(({ Renderer3D }) => {
+          renderer3d = new Renderer3D(canvas3d, cfg);
+          renderer3d.resize(innerWidth, innerHeight);
+          canvas.classList.add('hidden');
+          canvas3d.classList.remove('hidden');
+        })
+        .catch(err => {
+          // A machine without working WebGL still gets a game.
+          console.warn('3D renderer unavailable, staying flat:', err);
+        });
+    }
     if (AUTOPILOT) send({ t: 'pick', team: 1 });
     return;
   }
@@ -383,11 +416,39 @@ function localTick() {
   predictor.advance(tick);
 }
 
-// Fixed-step accumulator rather than setInterval, for the same reason the server
-// has one: setInterval drifts, and a drifting client tick is exactly the bug
-// this whole redesign was written to remove.
-let lastFrame = performance.now();
+/*
+ * The tick loop runs on its own timer, NOT inside the render loop.
+ *
+ * It used to be driven by requestAnimationFrame, which is fine until a frame
+ * gets expensive. Under software WebGL a frame can take hundreds of
+ * milliseconds, the ticks stopped being emitted, no input reached the server,
+ * and the connection eventually dropped: a rendering cost turning into a
+ * network failure. Input is not allowed to depend on how fast the picture is.
+ *
+ * It is still a fixed-step accumulator rather than one tick per timer fire,
+ * because setInterval drifts, and a drifting client clock is the bug this whole
+ * design exists to avoid.
+ */
+let lastTickAt = performance.now();
 let accumulator = 0;
+
+function tickLoop() {
+  const now = performance.now();
+  let elapsed = now - lastTickAt;
+  lastTickAt = now;
+  if (elapsed > 250) elapsed = 250;   // came back from a background tab
+  accumulator += elapsed;
+
+  let guard = 0;
+  while (accumulator >= cfg.dtMs && guard++ < 12) {
+    accumulator -= cfg.dtMs;
+    localTick();
+    if (haveClock && predTick < targetTick && guard++ < 12) localTick();
+  }
+  if (haveClock && predTick > targetTick + 1) accumulator = 0;
+}
+
+setInterval(tickLoop, 1000 / 120);   // twice the tick rate, so the step is never late
 
 /**
  * Everything, as the predictor believes it is right now.
@@ -442,9 +503,10 @@ function spotImpacts(bodies) {
       // One flash per body at a time, so a long contact does not stack.
       const recent = flashes.some(f => f.id === b.id && now - f.born < 200);
       if (!recent) {
-        flashes.push({ id: b.id, x: b.x, y: b.y, born: now,
-                       strength: Math.min(delta / 24, 1) });
+        const strength = Math.min(delta / 24, 1);
+        flashes.push({ id: b.id, x: b.x, y: b.y, born: now, strength });
         if (flashes.length > 24) flashes.shift();
+        if (renderer3d) renderer3d.addFlash(b.x, b.y, strength);
       }
     }
   }
@@ -543,28 +605,7 @@ function finishDrawOffsets() {
 }
 
 function frame() {
-  const now = performance.now();
-  let elapsed = now - lastFrame;
-  lastFrame = now;
-  if (elapsed > 250) elapsed = 250;  // came back from a background tab
-  accumulator += elapsed;
-  let guard = 0;
-  while (accumulator >= cfg.dtMs && guard++ < 10) {
-    accumulator -= cfg.dtMs;
-    localTick();
-    // Behind the server's clock: run an extra tick to catch up rather than
-    // renumbering, so no tick is ever left without an input.
-    if (haveClock && predTick < targetTick && guard++ < 10) {
-      localTick();
-    }
-  }
-  // Ahead of it: let the accumulator drain without emitting, which slows the
-  // client's clock by a tick instead of jumping it backwards.
-  if (haveClock && predTick > targetTick + 1) {
-    accumulator = 0;
-  }
-
-  draw(now);
+  draw(performance.now());
   requestAnimationFrame(frame);
 }
 
@@ -595,6 +636,30 @@ function drawStar(b) {
 }
 
 function draw(now) {
+  recordTrails();
+
+  if (renderer3d) {
+    const me = myTeam < 0 ? null : (predictionOn ? predictor?.body : serverMe);
+    const drawn = smoothedBodies();
+    // Replace the local player's entry with the predicted body, so the thing
+    // you steer is the thing that answers instantly.
+    if (me) {
+      const i = drawn.findIndex(b => b.id === myId);
+      const mine = {
+        id: myId, x: me.x, y: me.y, r: me.radius ?? me.r,
+        team: myTeam, fixed: false, tether: predictor?.anchor?.id ?? 0,
+      };
+      if (i >= 0) drawn[i] = mine;
+      else drawn.push(mine);
+    } else {
+      const i = drawn.findIndex(b => b.id === myId);
+      if (i >= 0) drawn.splice(i, 1);
+    }
+    renderer3d.draw(drawn, myId, ghostOn && serverMe && myTeam >= 0 ? serverMe : null);
+    drawHud();
+    return;
+  }
+
   const W = canvas.width, H = canvas.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#05070d';
@@ -609,7 +674,6 @@ function draw(now) {
   ctx.strokeStyle = '#1c2740';
   ctx.strokeRect(0, 0, cfg.w, cfg.h);
 
-  recordTrails();
   drawFlashes(now);
 
   // The jaws: the stretch of each end wall a star can be fed through.
@@ -716,12 +780,19 @@ function draw(now) {
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  renderOverlay();
+  drawHud();
+}
 
-  scoreboard.innerHTML =
-    `<span class="norse">NORSE <b>${score[0]}</b></span>` +
-    `<span style="opacity:.4">   ·   </span>` +
-    `<span class="greek"><b>${score[1]}</b> GREEK</span>`;
+/**
+ * The DOM parts of the screen: lobby overlay, scoreboard, diagnostics.
+ *
+ * Shared by both renderers rather than duplicated in each, which is how it was
+ * briefly written and how it broke: the flat path called a drawHud() that had
+ * never been defined, and the only symptom was an exception every frame that
+ * nobody was reading.
+ */
+function drawHud() {
+  renderOverlay();
 
   hud.innerHTML =
     `orrery  <b>you are ${myId ?? '...'}</b> ` +
@@ -736,6 +807,14 @@ function draw(now) {
     `WASD thrust   SPACE shove   SHIFT tether   P prediction   L lag   G ghost` +
     (AUTOPILOT ? '   <b>autopilot</b>' : '') +
     (connected ? '' : '\n<span id="warn">disconnected, reconnecting</span>');
+
+  scoreboard.innerHTML =
+    `<span class="norse">NORSE <b>${score[0]}</b></span>` +
+    `<span style="opacity:.4">   ·   </span>` +
+    `<span class="greek"><b>${score[1]}</b> GREEK</span>`;
 }
 
+
+// Start drawing. The tick loop above runs on its own timer, so input keeps
+// flowing even when a frame is slow; this is only the picture.
 requestAnimationFrame(frame);

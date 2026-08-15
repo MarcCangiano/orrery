@@ -81,6 +81,8 @@ Two reasons, in order:
 - [x] ?auto=1 autopilot, for demos and for taking screenshots of live play
 - [x] Lobby: start screen, pick a side, five second countdown, then kick off.
       Teams are chosen rather than assigned by join order
+- [x] 3D renderer (Three.js, vendored). The simulation stays 2D and verified;
+      only the picture is dimensional. ?flat=1 keeps the canvas renderer
 - [ ] Sound
 - [x] CI: GitHub Actions runs the tests, the drift check and the prediction
       check on every push. The browser check skips cleanly without Chrome

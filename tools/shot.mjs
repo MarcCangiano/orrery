@@ -26,7 +26,9 @@ const profile = mkdtempSync(join(tmpdir(), 'orrery-shot-'));
 
 const chrome = spawn(CHROME, [
   '--headless=new',
-  '--disable-gpu',
+  // NOT --disable-gpu: that switches off WebGL, and this tool exists to
+  // photograph a WebGL renderer. SwiftShader draws it in software instead.
+  '--enable-unsafe-swiftshader',
   '--hide-scrollbars',
   `--remote-debugging-port=${PORT}`,
   `--user-data-dir=${profile}`,

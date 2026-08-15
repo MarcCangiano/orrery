@@ -24,10 +24,15 @@ taken and how you watch prediction work without needing three hands.
 
 ![Orrery](docs/screenshot.png)
 
-*A live frame: the star top right, a player and the bot contesting it, two
-impact rings from the last collision, and the amber circle behind the green
-player is where the server thinks that player is, 116ms of round trip back.
-Prediction error at that moment: 0.0000.*
+*A live frame. The star is an actual light: it throws the shadows, and the far
+end of the arena goes dark when it is at the near end.*
+
+The simulation underneath is still two dimensional, and still verified bit for
+bit against the server. Only the picture has depth. That is the entire reason
+the 3D view was cheap to add and carries no risk: `render3d.mjs` reads the same
+body list the flat renderer reads and cannot touch the physics. `?flat=1` gets
+you the canvas version, which stays in the tree because it is what runs on a
+machine whose WebGL does not.
 
 ---
 
