@@ -59,9 +59,10 @@ Two reasons, in order:
 - [x] JDK installed and verified (Temurin 21.0.12, isolated under ~/jdks, never brew)
 - [x] Gradle build, JUnit, 8 passing tests
 - [x] Fixed-tick server loop with a measured, stable tick (59.65/sec vs 60 target, 0 dropped)
-- [ ] WebSocket transport and a binary-ish protocol
-- [ ] Client connects, sends input, renders server state
-- [ ] Physics solver: bodies, walls, collisions, restitution
+- [x] WebSocket transport, JSON protocol (binary later, when the shape stops changing)
+- [x] Client connects, sends input, renders server state
+- [x] Physics: bodies, thrust, walls, restitution, speed cap. Collisions between
+      bodies NOT done yet
 - [ ] Client prediction and reconciliation
 - [ ] Debug tooling: lag simulator, predicted-vs-authoritative overlay
 - [ ] Tether
@@ -85,6 +86,16 @@ Two reasons, in order:
 
 ## Next action
 
-Transport. A WebSocket endpoint, a client that connects, and one input message
-making a body move on the server and appear on screen. Nothing predicted yet:
-first prove the round trip, then make it feel good.
+Prediction. The client currently draws the past and it feels like it. Next:
+keep a ring buffer of unacknowledged inputs, run the same physics locally the
+moment a key is pressed, and on each snapshot rewind to the server's position
+and replay the inputs it hadn't seen yet.
+
+That requires the JavaScript simulation to match `World.step` exactly, which is
+the reason `World` has no wall clock, no randomness and no hash iteration in it.
+Build the drift test at the same time: run both simulations over identical
+inputs and assert they agree, or the divergence will be found later as "it feels
+weird sometimes".
+
+Also worth doing soon, in rough order: body-to-body collisions, then the tether,
+then interpolation for other players.
