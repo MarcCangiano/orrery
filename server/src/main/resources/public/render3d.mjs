@@ -18,6 +18,18 @@
 import * as THREE from './vendor/three.module.js';
 
 const TEAM_COLOR = [0x7fa8e3, 0xe0b062];
+
+/*
+ * Bodies are multiplied by a near-white rather than by the team colour.
+ *
+ * Multiplying a texture that averages rgb(50,45,30) by a saturated team colour
+ * leaves almost nothing: at the distance this game is played from, a player is
+ * about twenty pixels across, and twenty pixels of near-black is a dot. The
+ * team read comes from the rim shell below, which is emissive and therefore
+ * survives being on the dark side of the arena. The texture is then free to be
+ * a material rather than a label.
+ */
+const BODY_TINT = [0xdfe8f8, 0xf0e2c8];
 const TEX = './textures/';
 
 /**
@@ -90,7 +102,9 @@ export class Renderer3D {
     // The dead system this arena hangs inside. Dark enough that it never
     // competes with the star, which is the only thing allowed to be bright.
     this.scene.background = this.tex.backdrop;
-    this.scene.backgroundIntensity = 0.5;
+    // Turned down again once the floor stopped competing with it. The backdrop
+    // is scenery; if it is ever the brightest thing on screen it is wrong.
+    this.scene.backgroundIntensity = 0.3;
     this.scene.fog = new THREE.Fog(0x05070d, 110, 280);
 
     // Looking down the arena at an angle rather than straight down. Straight
@@ -176,10 +190,16 @@ export class Renderer3D {
   buildArena() {
     const { w, h } = this.cfg;
 
-    // The floor. Slightly larger than the cage so the walls have something to
-    // stand on and the fog has something to fade into.
+    /*
+     * The floor is exactly the cage, not larger.
+     *
+     * It used to extend forty units past the walls, which lit up as a pale slab
+     * spreading out under the arena and made the whole thing look like a board
+     * sitting on a table. The arena is supposed to be a platform hanging in a
+     * dead system with nothing under it.
+     */
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(w + 40, h + 40),
+      new THREE.PlaneGeometry(w, h),
       new THREE.MeshStandardMaterial({
         map: this.tex.floorAlbedo,
         normalMap: this.tex.floorNormal,
@@ -191,12 +211,15 @@ export class Renderer3D {
         // The albedo is graded very dark on purpose, so it is brightened here
         // rather than in the file: the texture stays the source of truth and
         // the renderer decides how lit the room is.
-        color: 0xcdd8ec,
-        roughness: 1,
-        metalness: 0.1,
+        // Brighter and slightly metallic. The plating carries panel seams and
+        // rivets that were completely invisible at the previous exposure: a
+        // texture nobody can see is a texture nobody needed.
+        color: 0xe6eeff,
+        roughness: 0.72,
+        metalness: 0.35,
       }),
     );
-    floor.position.set(w / 2, h / 2, -0.01);
+    floor.position.set(w / 2, h / 2, 0);
     floor.receiveShadow = true;
     this.scene.add(floor);
 
@@ -218,6 +241,53 @@ export class Renderer3D {
       mesh.castShadow = true;
       this.scene.add(mesh);
     }
+
+    /*
+     * The orrery itself, etched into the deck: concentric orbit rings around
+     * the centre spot, with tick marks on the outermost. The floor was a plain
+     * dark quad and read as an empty table. This is what the arena is supposed
+     * to have been built from, it costs a handful of line loops, and it gives
+     * the eye something to judge distance and speed against, which a featureless
+     * plane never does.
+     */
+    const ringMat = new THREE.LineBasicMaterial({
+      color: 0x2f4468, transparent: true, opacity: 0.55,
+    });
+    for (const radius of [7, 16, 26, 37]) {
+      const pts = [];
+      for (let i = 0; i <= 96; i++) {
+        const a = (i / 96) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a) * radius, Math.sin(a) * radius, 0.04));
+      }
+      const ring = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ringMat);
+      ring.position.set(w / 2, h / 2, 0);
+      this.scene.add(ring);
+    }
+
+    // Tick marks around the outer ring, like the graduations on the instrument
+    // this place used to be.
+    const tickPts = [];
+    for (let i = 0; i < 48; i++) {
+      const a = (i / 48) * Math.PI * 2;
+      const inner = i % 4 === 0 ? 34.5 : 36;
+      tickPts.push(new THREE.Vector3(Math.cos(a) * inner, Math.sin(a) * inner, 0.04));
+      tickPts.push(new THREE.Vector3(Math.cos(a) * 37, Math.sin(a) * 37, 0.04));
+    }
+    const ticks = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(tickPts), ringMat);
+    ticks.position.set(w / 2, h / 2, 0);
+    this.scene.add(ticks);
+
+    // The halfway line, because a pitch has one and it tells you whose half the
+    // star is in without looking at the score.
+    const half = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(w / 2, 0.6, 0.04),
+        new THREE.Vector3(w / 2, h - 0.6, 0.04),
+      ]),
+      new THREE.LineBasicMaterial({ color: 0x2f4468, transparent: true, opacity: 0.4 }),
+    );
+    this.scene.add(half);
 
     // A lit edge around the top of the cage. The flat renderer got its
     // readability from a single stroked rectangle, and losing that was the main
@@ -274,7 +344,12 @@ export class Renderer3D {
       // close.
       material = new THREE.MeshStandardMaterial({
         map: b.team === 0 ? this.tex.norse : this.tex.greek,
-        color: TEAM_COLOR[b.team] ?? 0x8a8f98,
+        color: BODY_TINT[b.team] ?? 0xc8ccd4,
+        // A little self-illumination in the team colour, so a body away from
+        // the star is dim rather than absent. The star still decides what a
+        // surface looks like; this only stops it from disappearing.
+        emissive: TEAM_COLOR[b.team] ?? 0x666a72,
+        emissiveIntensity: 0.22,
         roughness: 0.45, metalness: 0.25,
       });
     }
@@ -284,6 +359,25 @@ export class Renderer3D {
     // itself and sat in a black ellipse of its own making.
     mesh.castShadow = b.id !== -1;
     mesh.receiveShadow = b.fixed === true;
+
+    /*
+     * A rim in the team's colour, drawn as an inside-out shell a little larger
+     * than the body. It is unlit, so a player on the dark side of the arena is
+     * still unmistakably Norse or Greek, which the texture alone cannot manage
+     * at twenty pixels. Not applied to the star or to fragments, which are
+     * nobody's.
+     */
+    if (b.id >= 0 && (b.team === 0 || b.team === 1)) {
+      const rim = new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({
+        color: TEAM_COLOR[b.team],
+        side: THREE.BackSide,
+        transparent: true,
+        opacity: 0.85,
+      }));
+      rim.scale.setScalar(1.24);
+      mesh.add(rim);
+    }
+
     this.scene.add(mesh);
     this.bodies.set(b.id, mesh);
     return mesh;

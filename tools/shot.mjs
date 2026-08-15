@@ -29,6 +29,9 @@ const chrome = spawn(CHROME, [
   // NOT --disable-gpu: that switches off WebGL, and this tool exists to
   // photograph a WebGL renderer. SwiftShader draws it in software instead.
   '--enable-unsafe-swiftshader',
+  // Local test pages import modules over file://, which Chrome blocks by
+  // default and reports as an empty canvas rather than as an error.
+  '--allow-file-access-from-files',
   '--hide-scrollbars',
   `--remote-debugging-port=${PORT}`,
   `--user-data-dir=${profile}`,
