@@ -14,6 +14,14 @@ public final class Body {
     public final double radius;
     public final double mass;
 
+    /**
+     * A body nothing can move: the ring fragments the arena is built from.
+     * Modelled as infinite mass rather than as a separate type, so collision
+     * code stays one code path. Inverse mass is zero, so every impulse divides
+     * into nothing and the fragment does not budge.
+     */
+    public boolean immovable;
+
     public double x;
     public double y;
     public double vx;
@@ -30,8 +38,16 @@ public final class Body {
         this.mass = mass;
     }
 
+    /** 1/mass, or zero for something that cannot be moved. */
+    public double invMass() {
+        return immovable ? 0.0 : 1.0 / mass;
+    }
+
     /** Apply a force for one tick. Zero-g: no drag, no friction, nothing stops you. */
     public void applyForce(double fx, double fy, double dt) {
+        if (immovable) {
+            return;
+        }
         vx += (fx / mass) * dt;
         vy += (fy / mass) * dt;
     }

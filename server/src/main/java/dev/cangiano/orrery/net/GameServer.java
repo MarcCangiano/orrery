@@ -66,6 +66,7 @@ public final class GameServer {
             Arena.WIDTH / 2, Arena.HEIGHT / 2, Arena.STAR_RADIUS, Arena.STAR_MASS));
 
     private final int[] score = new int[2];
+    private final List<Body> fragments = new ArrayList<>();
     /** Ticks left of the pause after a goal. Inputs are ignored while it runs. */
     private int freeze;
 
@@ -74,7 +75,7 @@ public final class GameServer {
     private volatile boolean running;
 
     /** One intent from a client, addressed to a specific server tick. */
-    private record Command(long seq, long tick, double ax, double ay) {}
+    private record Command(long seq, long tick, double ax, double ay, boolean shove) {}
 
     /** What the server knows about one connection. */
     private static final class Player {
@@ -82,9 +83,11 @@ public final class GameServer {
         /** Written by network threads, read by the sim thread. Slot is tick % INPUT_RING. */
         final AtomicReferenceArray<Command> ring = new AtomicReferenceArray<>(INPUT_RING);
         // Only the sim thread touches these.
-        Command lastApplied = new Command(0, 0, 0, 0);
+        Command lastApplied = new Command(0, 0, 0, 0, false);
         volatile long ack;
         volatile long missed;
+        /** The tick this player may shove again. Only the sim thread writes it. */
+        volatile long shoveReadyTick;
 
         Player(int id) {
             this.id = id;
@@ -92,6 +95,14 @@ public final class GameServer {
     }
 
     public void start(int port) {
+        for (int i = 0; i < Arena.FRAGMENTS.length; i++) {
+            Body f = new Body(Arena.FIRST_FRAGMENT_ID - i,
+                    Arena.FRAGMENTS[i][0], Arena.FRAGMENTS[i][1],
+                    Arena.FRAGMENT_RADIUS, 1);
+            f.immovable = true;
+            fragments.add(world.add(f));
+        }
+
         app = Javalin.create(cfg -> cfg.staticFiles.add("/public",
                 io.javalin.http.staticfiles.Location.CLASSPATH));
 
@@ -109,7 +120,8 @@ public final class GameServer {
 
                 ctx.send(write(Messages.Welcome.of(id, Arena.WIDTH, Arena.HEIGHT, TICK_HZ,
                         THRUST, World.MAX_SPEED, World.WALL_RESTITUTION,
-                        World.BODY_RESTITUTION, team, Arena.JAWS_HALF_HEIGHT)));
+                        World.BODY_RESTITUTION, team, Arena.JAWS_HALF_HEIGHT,
+                        Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE, Arena.SHOVE_COOLDOWN)));
                 System.out.printf("player %d joined team %d (%d online)%n",
                         id, team, players.size());
             });
@@ -129,7 +141,8 @@ public final class GameServer {
                         node.path("seq").asLong(0),
                         forTick,
                         clamp(node.path("ax").asDouble(0), -1, 1),
-                        clamp(node.path("ay").asDouble(0), -1, 1));
+                        clamp(node.path("ay").asDouble(0), -1, 1),
+                        node.path("sh").asBoolean(false));
                 p.ring.set((int) Math.floorMod(forTick, INPUT_RING), c);
             });
 
@@ -183,6 +196,17 @@ public final class GameServer {
                         // Nobody thrusts during the pause after a goal. The
                         // reset is only legible if the world holds still for it.
                         if (b != null && freeze == 0) {
+                            // A shove fires only on the tick its own input was
+                            // applied, never from a held intent. Holding an
+                            // intent across a dropped packet is right for a
+                            // thruster and wrong for a one-shot action: it would
+                            // fire again the moment the cooldown lapsed, on a
+                            // tick the player never asked for.
+                            boolean asked = c != null && c.tick() == tick && c.shove();
+                            if (asked && tick >= p.shoveReadyTick) {
+                                world.shove(b, Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE);
+                                p.shoveReadyTick = tick + Arena.SHOVE_COOLDOWN;
+                            }
                             b.applyForce(p.lastApplied.ax() * THRUST,
                                     p.lastApplied.ay() * THRUST, dt);
                         }
@@ -245,9 +269,9 @@ public final class GameServer {
         synchronized (world) {
             states = new ArrayList<>(world.bodies().size());
             for (Body b : world.bodies()) {
-                int team = b.id == Arena.STAR_ID ? -1 : Arena.teamOf(b.id);
+                int team = b.id < 0 ? -1 : Arena.teamOf(b.id);
                 states.add(new Messages.BodyState(b.id, b.x, b.y, b.vx, b.vy,
-                        b.radius, b.mass, team));
+                        b.radius, b.mass, team, b.immovable));
             }
         }
         // Each client gets its own frame, because ack is per client.
@@ -256,7 +280,7 @@ public final class GameServer {
             if (ctx.session.isOpen()) {
                 Player p = e.getValue();
                 ctx.send(write(Messages.Snapshot.of(tick, p.ack, p.missed,
-                        score[0], score[1], freeze, states)));
+                        score[0], score[1], freeze, p.shoveReadyTick, states)));
             }
         }
     }

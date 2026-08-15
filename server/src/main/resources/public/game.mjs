@@ -43,6 +43,7 @@ const RESYNC_THRESHOLD = 10;
 const cfg = {
   w: 120, h: 70, hz: 60, thrust: 60, maxSpeed: 40, restitution: 0.75,
   bodyRestitution: 0.9, dt: 1 / 60, dtMs: 1000 / 60, jaws: 70 / 6,
+  shoveRange: 6, shoveImpulse: 26, shoveCooldown: 40,
 };
 
 const STAR_ID = -1;
@@ -62,6 +63,8 @@ let serverTick = 0;
 let serverMe = null;
 let missedOnServer = 0;
 let myTeam = 0;
+let shoveReady = 0;
+let shoveHeld = false;
 let score = [0, 0];
 let freeze = 0;
 
@@ -78,12 +81,17 @@ let fakeLagMs = 0;
 const keys = new Set();
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
+  if (k === ' ') { shoveHeld = true; return; }
   if (k === 'p') { predictionOn = !predictionOn; return; }
   if (k === 'g') { ghostOn = !ghostOn; return; }
   if (k === 'l') { fakeLagMs = fakeLagMs === 0 ? 100 : fakeLagMs === 100 ? 300 : 0; return; }
   keys.add(k);
 });
-addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (k === ' ') shoveHeld = false;
+  keys.delete(k);
+});
 
 function resize() {
   canvas.width = innerWidth * devicePixelRatio;
@@ -118,6 +126,8 @@ function handle(raw) {
       w: m.w, h: m.h, hz: m.hz, thrust: m.thrust,
       maxSpeed: m.maxSpeed, restitution: m.restitution,
       bodyRestitution: m.bodyRestitution, jaws: m.jaws,
+      shoveRange: m.shoveRange, shoveImpulse: m.shoveImpulse,
+      shoveCooldown: m.shoveCooldown,
       dt: 1 / m.hz, dtMs: 1000 / m.hz,
     });
     myTeam = m.team;
@@ -162,7 +172,8 @@ function handle(raw) {
   // The predictor compares the truth against what IT had predicted for that same
   // tick, not against where we are now. We are deliberately ahead of the server,
   // so comparing now-against-then would report the lead as an error.
-  replayedLast = predictor.reconcile(m.tick, m.bodies, m.freeze);
+  replayedLast = predictor.reconcile(m.tick, m.bodies, m.freeze, m.ready);
+  shoveReady = m.ready;
   correctionError = predictor.lastError;
   worstCorrection = predictor.worstError;
 }
@@ -186,11 +197,14 @@ function localTick() {
   if (myId === null || !haveClock || !predictor) return;
   const tick = ++predTick;
   const { ax, ay } = readKeys();
+  // One shove per press, not one per tick the bar is held down.
+  const sh = shoveHeld && tick >= predictor.shoveReadyTick;
+  if (sh) shoveHeld = false;
   seq++;
-  const input = { ax, ay };
+  const input = { ax, ay, sh };
   predictor.setInput(tick, input);
   sentAt.set(seq, performance.now());
-  send({ t: 'input', seq, tick, ax, ay });
+  send({ t: 'input', seq, tick, ax, ay, sh });
 
   // Always advance, even with prediction switched off, so the predictor's tick
   // and history stay aligned with the server and P can be toggled at any moment.
@@ -297,6 +311,15 @@ function draw(now) {
   for (const b of interpolatedBodies(now)) {
     if (b.id === myId) continue;
     if (b.id === STAR_ID) { drawStar(b); continue; }
+    if (b.fixed) {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fillStyle = '#161d2c';
+      ctx.fill();
+      ctx.strokeStyle = '#2a3752';
+      ctx.stroke();
+      continue;
+    }
     ctx.beginPath();
     ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
     ctx.fillStyle = b.team === myTeam ? '#4a6fa5' : '#8a5a3c';
@@ -341,7 +364,9 @@ function draw(now) {
     `prediction ${predictionOn ? '<b>on</b>' : '<span id="warn">off</span>'}` +
     `   replayed ${replayedLast}\n` +
     `correction ${correctionError.toFixed(4)}  worst ${worstCorrection.toFixed(4)}\n` +
-    `WASD thrust   P prediction   L lag   G ghost`;
+    `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
+        Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
+    `WASD thrust   SPACE shove   P prediction   L lag   G ghost`;
 }
 
 requestAnimationFrame(frame);

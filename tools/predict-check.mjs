@@ -39,8 +39,14 @@ let sumError = 0;
 let worstError = 0;
 // A run that never touches the star measures prediction against nothing more
 // interesting than a straight line. Count the contacts and fail without them.
+let goals = 0;
+let lastFreeze = 0;
+let skippedForGoals = 0;
 let starContacts = 0;
 let touchingStar = false;
+let shoves = 0;
+let starPos = null;
+let myPos = null;
 
 const ws = new WebSocket(url);
 ws.addEventListener('error', () => {
@@ -59,6 +65,9 @@ ws.addEventListener('message', ev => {
       restitution: m.restitution, dt: 1 / m.hz, dtMs: 1000 / m.hz,
     });
     cfg.bodyRestitution = m.bodyRestitution;
+    cfg.shoveRange = m.shoveRange;
+    cfg.shoveImpulse = m.shoveImpulse;
+    cfg.shoveCooldown = m.shoveCooldown;
     predictor = new Predictor(cfg, myId, { x: cfg.w / 2, y: cfg.h / 2, r: 1.6 });
     return;
   }
@@ -68,6 +77,8 @@ ws.addEventListener('message', ev => {
   if (!truth) return;
 
   snapshots++;
+  const wasFreeze = lastFreeze;
+  lastFreeze = m.freeze;
 
   const t0 = sentAt.get(m.ack);
   if (t0 !== undefined) {
@@ -85,23 +96,41 @@ ws.addEventListener('message', ev => {
   else if (target < predTick) predTick -= 1;
 
   const star = m.bodies.find(b => b.id === -1);
+  myPos = { x: truth.x, y: truth.y };
   if (star) {
+    starPos = { x: star.x, y: star.y };
     const gap = Math.hypot(star.x - truth.x, star.y - truth.y);
     const touching = gap <= star.r + truth.r + 0.25;
     if (touching && !touchingStar) starContacts++;
     touchingStar = touching;
   }
 
-  predictor.reconcile(m.tick, m.bodies, m.freeze);
+  predictor.reconcile(m.tick, m.bodies, m.freeze, m.ready);
 
   // The first stretch is the clock settling in. Measuring then would report the
   // resync as a prediction failure, which it is not.
-  if (snapshots > 20 && predictor.lastError > 0) {
+  // A goal teleports every body back to its spawn. That is an authoritative
+  // event, not something a client could have predicted, so the correction it
+  // causes is correct behaviour rather than drift. Counting it would bury a
+  // real regression under a number that is supposed to be there.
+  if (m.freeze > 0) {
+    if (wasFreeze === 0) goals++;   // snapshots are every other tick, so watch the edge
+    skippedForGoals++;
+    predictor.lastError = 0;
+  } else if (snapshots > 20) {
     sumError += predictor.lastError;
     measured++;
     if (predictor.lastError > worstError) worstError = predictor.lastError;
-  } else if (snapshots > 20) {
-    measured++;  // an exact match still counts as a measurement
+    if (predictor.lastError > 0.1) {
+      const recent = [];
+      for (let tk = m.tick - 6; tk <= m.tick + 6; tk++) {
+        const i = predictor.inputs.get(tk);
+        if (i && i.sh) recent.push(tk);
+      }
+      console.error(`  spike ${predictor.lastError.toFixed(3)} at server tick ${m.tick}` +
+        `  freeze=${m.freeze}  ready=${m.ready}  missed=${m.missed}` +
+        `  shoveTicks=[${recent.join(',')}]  lead=${predTick - m.tick}`);
+    }
   }
 });
 
@@ -109,25 +138,43 @@ ws.addEventListener('message', ev => {
 // a straight line would predict perfectly even with the logic broken, and a
 // collision is the case where the client is predicting something it does not
 // fully control.
-function intent(t, fromRight) {
-  const toward = fromRight ? -1 : 1;
-  const phase = Math.floor(t / 900) % 4;
-  if (phase === 0) return { ax: toward, ay: 0 };
-  if (phase === 1) return { ax: -toward, ay: -0.3 };
-  if (phase === 2) return { ax: toward, ay: 0.3 };
-  return { ax: 0, ay: 0 };
+/**
+ * Chase the star, ram it, then back off and shove.
+ *
+ * <p>A fixed direction was not good enough: shoving moves the star, so by the
+ * time the bot came back around it was thrusting at where the star used to be
+ * and the run covered no collisions at all. Steering at the live position makes
+ * contact reliable, which is the whole point of the check.
+ */
+function intent(t) {
+  const phase = Math.floor(t / 1200) % 3;
+  if (!starPos || !myPos) return { ax: 1, ay: 0, mayShove: false };
+
+  const dx = starPos.x - myPos.x;
+  const dy = starPos.y - myPos.y;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const toStar = { ax: dx / len, ay: dy / len };
+
+  // Two phases closing on the star with the hands down, one backing off and
+  // shoving. Both the collision path and the shove path get exercised.
+  if (phase === 2) {
+    return { ax: -toStar.ax, ay: -toStar.ay, mayShove: true };
+  }
+  return { ...toStar, mayShove: false };
 }
 
 const started = Date.now();
 const timer = setInterval(() => {
   if (!predictor || !haveClock || ws.readyState !== WebSocket.OPEN) return;
   const tick = ++predTick;
-  const { ax, ay } = intent(Date.now() - started, myId % 2 === 1);
+  const { ax, ay, mayShove } = intent(Date.now() - started);
+  const sh = mayShove && tick >= predictor.shoveReadyTick;
+  if (sh) shoves++;
   seq++;
-  const input = { ax, ay };
+  const input = { ax, ay, sh };
   predictor.setInput(tick, input);
   sentAt.set(seq, Date.now());
-  ws.send(JSON.stringify({ t: 'input', seq, tick, ax, ay }));
+  ws.send(JSON.stringify({ t: 'input', seq, tick, ax, ay, sh }));
   predictor.advance(tick);
 }, 1000 / 60);
 
@@ -140,10 +187,18 @@ setTimeout(() => {
   console.log(`  mean error  ${mean.toFixed(6)} units`);
   console.log(`  worst error ${worstError.toFixed(6)} units  (limit ${MAX_ALLOWED_ERROR})`);
 
-  console.log(`  star contacts ${starContacts}`);
+  console.log(`  star contacts ${starContacts}   shoves ${shoves}   goals ${goals}`);
+  if (skippedForGoals) {
+    console.log(`  ${skippedForGoals} snapshots excluded: the world was resetting after a goal`);
+  }
 
   if (measured === 0) {
     console.error('predict-check: FAILED — nothing was measured');
+    process.exit(1);
+  }
+  if (shoves === 0) {
+    console.error('predict-check: FAILED — never shoved, so the action and its');
+    console.error('  recoil were not exercised.');
     process.exit(1);
   }
   if (starContacts === 0) {

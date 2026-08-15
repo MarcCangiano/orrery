@@ -159,15 +159,22 @@ class GameServerIntegrationTest {
 
         int players = 0;
         int stars = 0;
+        int fragments = 0;
         for (JsonNode b : snapshot.get("bodies")) {
-            if (b.get("id").asInt() == dev.cangiano.orrery.sim.Arena.STAR_ID) {
+            int id = b.get("id").asInt();
+            if (id == dev.cangiano.orrery.sim.Arena.STAR_ID) {
                 stars++;
+            } else if (id <= dev.cangiano.orrery.sim.Arena.FIRST_FRAGMENT_ID) {
+                fragments++;
+                assertTrue(b.get("fixed").asBoolean(), "fragments must be marked immovable");
             } else {
                 players++;
             }
         }
         assertEquals(2, players, "both players should be in the world");
         assertEquals(1, stars, "and so should the star");
+        assertEquals(dev.cangiano.orrery.sim.Arena.FRAGMENTS.length, fragments,
+                "and every ring fragment");
         assertTrue(snapshot.has("scoreA") && snapshot.has("scoreB"),
                 "snapshots carry the score");
     }

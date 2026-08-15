@@ -32,6 +32,26 @@ public final class Arena {
     /** Ticks the world holds still after a goal, so a score is legible. */
     public static final int RESET_TICKS = 90;
 
+    /** Shove: reach beyond the two radii, impulse at point blank, and the wait. */
+    public static final double SHOVE_RANGE = 6.0;
+    public static final double SHOVE_IMPULSE = 26.0;
+    public static final int SHOVE_COOLDOWN = 40;
+
+    /** Ring fragments: immovable lumps of the dead orrery to bounce off and tether to. */
+    public static final double FRAGMENT_RADIUS = 3.2;
+    public static final int FIRST_FRAGMENT_ID = -100;
+
+    /**
+     * Fragment centres, as {x, y} pairs. Four of them, symmetric, off the centre
+     * line so the direct shot at the jaws is never simply open.
+     */
+    public static final double[][] FRAGMENTS = {
+        { WIDTH * 0.34, HEIGHT * 0.24 },
+        { WIDTH * 0.34, HEIGHT * 0.76 },
+        { WIDTH * 0.66, HEIGHT * 0.24 },
+        { WIDTH * 0.66, HEIGHT * 0.76 },
+    };
+
     private Arena() {}
 
     /** Which team a player id belongs to. Norse take the left jaws, Greek the right. */

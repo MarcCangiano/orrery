@@ -44,6 +44,8 @@ export class Predictor {
     this.held = { ax: 0, ay: 0 };
     this.lastError = 0;
     this.worstError = 0;
+    /** Tick our own shove is available again. Re-synced from every snapshot. */
+    this.shoveReadyTick = 0;
   }
 
   /** Record the intent addressed to a tick. */
@@ -53,11 +55,20 @@ export class Predictor {
 
   /** Advance one tick, using the input for it or holding the last one. */
   advance(tick, frozen = false) {
-    const input = this.inputs.get(tick) ?? this.held;
+    const own = this.inputs.get(tick);
+    const input = own ?? this.held;
     this.held = input;
     // During the pause after a goal the server ignores thrust, so predicting
     // any would put us somewhere the server never goes.
     const applied = frozen ? { ax: 0, ay: 0 } : input;
+
+    // The shove fires only on a tick we actually addressed an input to, never
+    // from a held intent, matching the server exactly. See GameServer.
+    if (!frozen && own && own.sh && tick >= this.shoveReadyTick) {
+      this.world.shove(this.body, this.cfg.shoveRange, this.cfg.shoveImpulse);
+      this.shoveReadyTick = tick + this.cfg.shoveCooldown;
+    }
+
     stepWithInput(this.world, this.body, applied, this.cfg.thrust, this.cfg.dt);
     this.tick = tick;
     this.history.set(tick, {
@@ -102,7 +113,7 @@ export class Predictor {
     if (mine) this.body = mine;
   }
 
-  reconcile(serverTick, truth, frozenTicks = 0) {
+  reconcile(serverTick, truth, frozenTicks = 0, serverShoveReady = null) {
     const mine = Array.isArray(truth)
         ? truth.find(b => b.id === this.id)
         : truth;
@@ -126,6 +137,11 @@ export class Predictor {
     // Re-establish what the server would have been holding at this point, so a
     // replayed gap holds the same intent the server held.
     this.held = this.inputAtOrBefore(serverTick);
+
+    // The server's cooldown wins. Ours can be ahead of it when a shove input
+    // was lost, and replaying with the wrong one would fire a shove the server
+    // never fired.
+    if (serverShoveReady !== null) this.shoveReadyTick = serverShoveReady;
 
     const to = this.tick;
     this.history.clear();

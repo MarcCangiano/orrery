@@ -54,12 +54,17 @@ public final class Messages {
             @JsonProperty("restitution") double restitution,
             @JsonProperty("bodyRestitution") double bodyRestitution,
             @JsonProperty("team") int team,
-            @JsonProperty("jaws") double jaws) {
+            @JsonProperty("jaws") double jaws,
+            @JsonProperty("shoveRange") double shoveRange,
+            @JsonProperty("shoveImpulse") double shoveImpulse,
+            @JsonProperty("shoveCooldown") int shoveCooldown) {
         public static Welcome of(int id, double w, double h, int hz,
                 double thrust, double maxSpeed, double restitution, double bodyRestitution,
-                int team, double jaws) {
+                int team, double jaws, double shoveRange, double shoveImpulse,
+                int shoveCooldown) {
             return new Welcome("welcome", id, w, h, hz, thrust, maxSpeed,
-                    restitution, bodyRestitution, team, jaws);
+                    restitution, bodyRestitution, team, jaws,
+                    shoveRange, shoveImpulse, shoveCooldown);
         }
     }
 
@@ -72,7 +77,8 @@ public final class Messages {
             @JsonProperty("vy") double vy,
             @JsonProperty("r") double r,
             @JsonProperty("m") double m,
-            @JsonProperty("team") int team) {}
+            @JsonProperty("team") int team,
+            @JsonProperty("fixed") boolean fixed) {}
 
     /**
      * The world as the server sees it, which is the only version that counts.
@@ -91,10 +97,12 @@ public final class Messages {
             @JsonProperty("scoreA") int scoreA,
             @JsonProperty("scoreB") int scoreB,
             @JsonProperty("freeze") int freeze,
+            @JsonProperty("ready") long ready,
             @JsonProperty("bodies") List<BodyState> bodies) {
         public static Snapshot of(long tick, long ack, long missed,
-                int scoreA, int scoreB, int freeze, List<BodyState> bodies) {
-            return new Snapshot("state", tick, ack, missed, scoreA, scoreB, freeze, bodies);
+                int scoreA, int scoreB, int freeze, long ready, List<BodyState> bodies) {
+            return new Snapshot("state", tick, ack, missed, scoreA, scoreB,
+                    freeze, ready, bodies);
         }
     }
 }

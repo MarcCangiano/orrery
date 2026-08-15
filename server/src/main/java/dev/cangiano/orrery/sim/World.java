@@ -74,6 +74,9 @@ public final class World {
      */
     public void step(double dt) {
         for (Body b : bodies) {
+            if (b.immovable) {
+                continue;
+            }
             b.clampSpeed(MAX_SPEED);
             b.x += b.vx * dt;
             b.y += b.vy * dt;
@@ -127,8 +130,11 @@ public final class World {
         // Push them apart by inverse mass, so a light body does most of the
         // moving. Without this they sink into each other and the impulse below
         // fires every tick.
-        double invA = 1.0 / a.mass;
-        double invB = 1.0 / b.mass;
+        double invA = a.invMass();
+        double invB = b.invMass();
+        if (invA + invB == 0) {
+            return;   // two fragments overlapping is a level design problem, not physics
+        }
         double overlap = minDist - dist;
         double share = overlap / (invA + invB);
         a.x -= nx * share * invA;
@@ -150,6 +156,51 @@ public final class World {
         a.vy -= impulse * ny * invA;
         b.vx += impulse * nx * invB;
         b.vy += impulse * ny * invB;
+    }
+
+    /**
+     * Push everything nearby away, and take the opposite push yourself.
+     *
+     * <p>This is the rule the whole game is built on: there is nothing to brace
+     * against out here, so every defensive shove costs you position. Falls off
+     * linearly with distance, which makes range a real decision rather than a
+     * binary.
+     *
+     * @return how many bodies were touched, so the caller can decide whether the
+     *         shove was worth its cooldown
+     */
+    public int shove(Body actor, double range, double impulse) {
+        int touched = 0;
+        for (Body b : bodies) {
+            if (b == actor) {
+                continue;
+            }
+            double dx = b.x - actor.x;
+            double dy = b.y - actor.y;
+            double dist = Math.sqrt(dx * dx + dy * dy);
+            double reach = actor.radius + b.radius + range;
+            if (dist >= reach || dist == 0) {
+                continue;
+            }
+            double nx = dx / dist;
+            double ny = dy / dist;
+            double falloff = 1.0 - (dist - actor.radius - b.radius) / range;
+            if (falloff < 0) {
+                falloff = 0;
+            }
+            double j = impulse * falloff;
+
+            double invB = b.invMass();
+            double invA = actor.invMass();
+            b.vx += nx * j * invB;
+            b.vy += ny * j * invB;
+            // Equal and opposite, always. Shoving a ring fragment still throws
+            // you backwards, which is the cheapest way to cross the arena.
+            actor.vx -= nx * j * invA;
+            actor.vy -= ny * j * invA;
+            touched++;
+        }
+        return touched;
     }
 
     private void bounceOffWalls(Body b) {

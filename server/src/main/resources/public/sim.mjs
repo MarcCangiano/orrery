@@ -17,7 +17,7 @@
 // they disagree by a single bit.
 
 export class Body {
-  constructor(id, x, y, radius, mass) {
+  constructor(id, x, y, radius, mass, immovable = false) {
     this.id = id;
     this.x = x;
     this.y = y;
@@ -25,9 +25,17 @@ export class Body {
     this.vy = 0;
     this.radius = radius;
     this.mass = mass;
+    // Ring fragments. Infinite mass rather than a separate type, so there is
+    // only ever one collision code path.
+    this.immovable = immovable;
+  }
+
+  invMass() {
+    return this.immovable ? 0 : 1 / this.mass;
   }
 
   applyForce(fx, fy, dt) {
+    if (this.immovable) return;
     this.vx += (fx / this.mass) * dt;
     this.vy += (fy / this.mass) * dt;
   }
@@ -73,12 +81,42 @@ export class World {
 
   step(dt) {
     for (const b of this.bodies) {
+      if (b.immovable) continue;
       b.clampSpeed(this.maxSpeed);
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       this.bounceOffWalls(b);
     }
     this.resolveCollisions();
+  }
+
+  // Push everything nearby away and take the opposite push. Mirrors
+  // World.shove on the server exactly.
+  shove(actor, range, impulse) {
+    let touched = 0;
+    for (const b of this.bodies) {
+      if (b === actor) continue;
+      const dx = b.x - actor.x;
+      const dy = b.y - actor.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const reach = actor.radius + b.radius + range;
+      if (dist >= reach || dist === 0) continue;
+
+      const nx = dx / dist;
+      const ny = dy / dist;
+      let falloff = 1.0 - (dist - actor.radius - b.radius) / range;
+      if (falloff < 0) falloff = 0;
+      const j = impulse * falloff;
+
+      const invB = b.invMass();
+      const invA = actor.invMass();
+      b.vx += nx * j * invB;
+      b.vy += ny * j * invB;
+      actor.vx -= nx * j * invA;
+      actor.vy -= ny * j * invA;
+      touched++;
+    }
+    return touched;
   }
 
   // One pass, in insertion order. Not iterated to convergence on purpose: the
@@ -110,8 +148,9 @@ export class World {
       ny = dy / dist;
     }
 
-    const invA = 1.0 / a.mass;
-    const invB = 1.0 / b.mass;
+    const invA = a.invMass();
+    const invB = b.invMass();
+    if (invA + invB === 0) return;
     const overlap = minDist - dist;
     const share = overlap / (invA + invB);
     a.x -= nx * share * invA;
@@ -165,4 +204,16 @@ export class World {
 export function stepWithInput(world, body, input, thrust, dt) {
   body.applyForce(input.ax * thrust, input.ay * thrust, dt);
   world.step(dt);
+}
+
+/** The order the server uses within a tick: shove first, then thrust, then step. */
+export function tickWithInput(world, body, input, cfg, canShove) {
+  let shoved = false;
+  if (input.sh && canShove) {
+    world.shove(body, cfg.shoveRange, cfg.shoveImpulse);
+    shoved = true;
+  }
+  body.applyForce(input.ax * cfg.thrust, input.ay * cfg.thrust, cfg.dt);
+  world.step(cfg.dt);
+  return shoved;
 }
