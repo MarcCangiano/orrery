@@ -43,6 +43,7 @@ let worstError = 0;
 let goals = 0;
 let lastFreeze = 0;
 let lastMissed = 0;
+let lastServerTick = 0;
 let lateSnapshots = 0;
 let skippedForGoals = 0;
 let starContacts = 0;
@@ -83,6 +84,7 @@ ws.addEventListener('message', ev => {
   if (!truth) return;
 
   snapshots++;
+  lastServerTick = m.tick;
   const wasFreeze = lastFreeze;
   lastFreeze = m.freeze;
 
@@ -204,7 +206,7 @@ function emitTick() {
   const input = { ax, ay, sh, th };
   predictor.setInput(tick, input);
   sentAt.set(seq, Date.now());
-  ws.send(JSON.stringify({ t: 'input', seq, tick, ax, ay, sh, th }));
+  ws.send(JSON.stringify({ t: 'input', seq, tick, ax, ay, sh, th, rt: lastServerTick }));
   predictor.advance(tick);
 }
 

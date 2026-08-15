@@ -70,6 +70,9 @@ Two reasons, in order:
 - [x] The star, the jaws, teams, scoring, post-goal reset
 - [x] Shove with equal-and-opposite recoil, on a cooldown
 - [x] Tether: rope constraint, anchors are fragments and the star
+- [x] Lag compensation: TRIED AND REMOVED, see the note in GameServer. Rewinding
+      made prediction worse because this client extrapolates rather than lagging
+- [x] Others drawn from the predicted world, not interpolated in the past
 - [ ] Interest management
 - [ ] Lag compensation for the shove
 - [ ] Match flow: a score limit and an end
@@ -118,10 +121,11 @@ Two rules fell out of measuring, both in `predictor.mjs`:
 
     ./verify.sh
 
-Runs the tests, the Java-versus-JavaScript drift check, and a headless client
-that plays for six seconds against a real server and measures its own prediction
-error. All three must pass. The last two are the ones that catch netcode bugs;
-the unit tests never will.
+Four gates: the tests, the Java-versus-JavaScript drift check, a headless client
+that plays for nine seconds against a real server and measures its own
+prediction error, and a browser load of the actual page. The unit tests will
+never catch a netcode bug; the middle two exist for that. The last one exists
+because all three of the others passed while the real client was a black screen.
 
 ## Next action
 

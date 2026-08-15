@@ -4,6 +4,7 @@
 #   1. unit and integration tests
 #   2. drift check: Java and JavaScript physics agree bit for bit
 #   3. predict check: a real client's prediction matches the real server
+#   4. client check: the browser page loads and comes alive
 #
 # The third one starts a server on its own port and shuts it down after, so it
 # never fights with one you already have running.
@@ -35,5 +36,10 @@ for _ in $(seq 1 60); do
 done
 
 node tools/predict-check.mjs "ws://localhost:$port/ws"
+
+echo
+echo "--- client check (the actual page, in a browser)"
+./tools/client-check.sh "http://localhost:$port/"
+
 echo
 echo "all checks passed"

@@ -31,7 +31,20 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const hud = document.getElementById('hud');
 
-const INTERP_DELAY_MS = 80;
+// Other players used to be drawn from interpolated snapshots, roughly 80ms in
+// the past. That is the standard answer and it is the wrong one here.
+//
+// This is a contact game: you aim at another body in order to hit it. Your own
+// prediction resolves that contact against the world your predictor holds,
+// which is the present, extrapolated. Drawing them in the past meant aiming at
+// one thing and colliding with another, and the discrepancy grew with latency.
+//
+// So everyone is drawn from the predicted world instead: synced to the server on
+// every snapshot, carried forward by the same physics in between. What you see
+// is what your prediction will use. The cost is a small pop when someone thrusts
+// in a way we could not know about, which is honest, and which the smoothing
+// below softens.
+const SMOOTH_PER_TICK = 0.35;
 
 // Extra ticks of lead beyond measured latency. Costs responsiveness, buys
 // tolerance for jitter. Four ticks is 67ms of margin: at two, roughly one input
@@ -68,6 +81,8 @@ let serverMe = null;
 let missedOnServer = 0;
 let myTeam = 0;
 let shoveReady = 0;
+const bodyTeam = new Map();
+const bodyTether = new Map();
 let shoveHeld = false;
 let score = [0, 0];
 let freeze = 0;
@@ -146,6 +161,11 @@ function handle(raw) {
   missedOnServer = m.missed;
   score = [m.scoreA, m.scoreB];
   freeze = m.freeze;
+  for (const b of m.bodies) {
+    bodyTeam.set(b.id, b.team);
+    bodyTether.set(b.id, b.tether);
+  }
+  captureDrawOffsets();
   snapshots.push({ at: performance.now(), tick: m.tick, bodies: m.bodies });
   while (snapshots.length > 32) snapshots.shift();
 
@@ -182,6 +202,7 @@ function handle(raw) {
   // tick, not against where we are now. We are deliberately ahead of the server,
   // so comparing now-against-then would report the lead as an error.
   replayedLast = predictor.reconcile(m.tick, m.bodies, m.freeze, m.ready);
+  finishDrawOffsets();
   shoveReady = m.ready;
   correctionError = predictor.lastError;
   worstCorrection = predictor.worstError;
@@ -214,7 +235,10 @@ function localTick() {
   const input = { ax, ay, sh, th };
   predictor.setInput(tick, input);
   sentAt.set(seq, performance.now());
-  send({ t: 'input', seq, tick, ax, ay, sh, th });
+  // rt is the snapshot our predicted world is built from. The server resolves a
+  // shove against that moment, which is the one we could actually see, and it
+  // is also the state our own prediction of the shove used.
+  send({ t: 'input', seq, tick, ax, ay, sh, th, rt: serverTick });
 
   // Always advance, even with prediction switched off, so the predictor's tick
   // and history stay aligned with the server and P can be toggled at any moment.
@@ -227,33 +251,62 @@ function localTick() {
 let lastFrame = performance.now();
 let accumulator = 0;
 
-function interpolatedBodies(now) {
-  const target = now - INTERP_DELAY_MS;
-  let older = null, newer = null;
-  for (const s of snapshots) {
-    if (s.at <= target) older = s;
-    else { newer = s; break; }
-  }
-  if (!older) return snapshots.length ? snapshots[snapshots.length - 1].bodies : [];
-  if (!newer) return older.bodies;
+/**
+ * Everything, as the predictor believes it is right now.
+ *
+ * <p>Each body carries a small drawing offset that decays toward zero, so a
+ * correction slides the drawn position over a few frames instead of teleporting
+ * it. The simulation is never smoothed, only the picture of it.
+ */
+const drawOffset = new Map();   // id -> {dx, dy}
 
-  const span = newer.at - older.at;
-  const alpha = span > 0 ? (target - older.at) / span : 0;
+function smoothedBodies() {
+  if (!predictor) return [];
   const out = [];
-  for (const a of older.bodies) {
-    const b = newer.bodies.find(x => x.id === a.id);
-    if (!b) continue;
+  for (const b of predictor.world.bodies) {
+    const off = drawOffset.get(b.id);
+    if (off) {
+      off.dx *= 1 - SMOOTH_PER_TICK;
+      off.dy *= 1 - SMOOTH_PER_TICK;
+      if (Math.abs(off.dx) < 0.01 && Math.abs(off.dy) < 0.01) drawOffset.delete(b.id);
+    }
     out.push({
-      id: a.id,
-      x: a.x + (b.x - a.x) * alpha,
-      y: a.y + (b.y - a.y) * alpha,
-      r: a.r,
-      team: a.team,
-      fixed: a.fixed,
-      tether: b.tether,
+      id: b.id,
+      x: b.x + (off ? off.dx : 0),
+      y: b.y + (off ? off.dy : 0),
+      r: b.radius,
+      team: bodyTeam.get(b.id) ?? -1,
+      fixed: b.immovable,
+      tether: bodyTether.get(b.id) ?? 0,
     });
   }
   return out;
+}
+
+/** Note where a body is drawn now, so the coming correction can be eased in. */
+function captureDrawOffsets() {
+  if (!predictor) return;
+  for (const b of predictor.world.bodies) {
+    if (b.id === myId) continue;
+    drawOffset.set(b.id, {
+      dx: (drawOffset.get(b.id)?.dx ?? 0) + b.x,
+      dy: (drawOffset.get(b.id)?.dy ?? 0) + b.y,
+    });
+  }
+}
+
+function finishDrawOffsets() {
+  if (!predictor) return;
+  for (const b of predictor.world.bodies) {
+    if (b.id === myId) continue;
+    const off = drawOffset.get(b.id);
+    if (!off) continue;
+    off.dx -= b.x;
+    off.dy -= b.y;
+    // A correction bigger than a body is a teleport, not a nudge: a goal reset
+    // or somebody joining. Snap those rather than sliding across the arena.
+    if (Math.hypot(off.dx, off.dy) > b.radius * 3) drawOffset.delete(b.id);
+  }
 }
 
 function frame() {
@@ -335,7 +388,7 @@ function draw(now) {
   }
   ctx.lineWidth = 2 / scale;
 
-  for (const b of interpolatedBodies(now)) {
+  for (const b of smoothedBodies()) {
     if (b.id === myId) continue;
     if (b.id === STAR_ID) { drawStar(b); continue; }
     if (b.fixed) {
@@ -375,9 +428,10 @@ function draw(now) {
     ctx.stroke();
   }
   // Everyone else's ropes come from the snapshot.
-  for (const b of interpolatedBodies(now)) {
+  const drawn = smoothedBodies();
+  for (const b of drawn) {
     if (b.id === myId || !b.tether) continue;
-    const anchor = interpolatedBodies(now).find(x => x.id === b.tether);
+    const anchor = drawn.find(x => x.id === b.tether);
     if (!anchor) continue;
     ctx.beginPath();
     ctx.moveTo(b.x, b.y);

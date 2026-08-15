@@ -76,7 +76,7 @@ public final class GameServer {
 
     /** One intent from a client, addressed to a specific server tick. */
     private record Command(long seq, long tick, double ax, double ay,
-            boolean shove, boolean tether) {}
+            boolean shove, boolean tether, long renderTick) {}
 
     /** What the server knows about one connection. */
     private static final class Player {
@@ -84,7 +84,7 @@ public final class GameServer {
         /** Written by network threads, read by the sim thread. Slot is tick % INPUT_RING. */
         final AtomicReferenceArray<Command> ring = new AtomicReferenceArray<>(INPUT_RING);
         // Only the sim thread touches these.
-        Command lastApplied = new Command(0, 0, 0, 0, false, false);
+        Command lastApplied = new Command(0, 0, 0, 0, false, false, 0);
         volatile long ack;
         volatile long missed;
         /** The tick this player may shove again. Only the sim thread writes it. */
@@ -148,7 +148,8 @@ public final class GameServer {
                         clamp(node.path("ax").asDouble(0), -1, 1),
                         clamp(node.path("ay").asDouble(0), -1, 1),
                         node.path("sh").asBoolean(false),
-                        node.path("th").asBoolean(false));
+                        node.path("th").asBoolean(false),
+                        node.path("rt").asLong(0));
                 p.ring.set((int) Math.floorMod(forTick, INPUT_RING), c);
             });
 
@@ -235,6 +236,30 @@ public final class GameServer {
 
                             boolean asked = c != null && c.tick() == tick && c.shove();
                             if (asked && tick >= p.shoveReadyTick) {
+                                /*
+                                 * No rewind here, deliberately, and it was
+                                 * measured rather than assumed.
+                                 *
+                                 * The usual reason to rewind is that a client
+                                 * aims at stale positions. This client does not
+                                 * hold stale positions: it mirrors the whole
+                                 * world and carries every body forward by
+                                 * inertia, so for anything without an input, the
+                                 * star and the fragments, its idea of the present
+                                 * IS the server's. Rewinding those to the tick of
+                                 * the last snapshot put the server BEHIND the
+                                 * client and prediction error went from 0.000000
+                                 * to 0.124 units.
+                                 *
+                                 * What a client genuinely cannot know is another
+                                 * player's intent. That is a real gap, and the
+                                 * answer to it is not to rewind everything; it
+                                 * is that the correction arrives within one
+                                 * snapshot. Revisit if player-to-player shoving
+                                 * ever feels wrong in real play with real
+                                 * latency, which is a question two humans answer
+                                 * and this file cannot.
+                                 */
                                 world.shove(b, Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE);
                                 p.shoveReadyTick = tick + Arena.SHOVE_COOLDOWN;
                             }

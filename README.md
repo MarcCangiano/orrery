@@ -59,6 +59,13 @@ tools/drift-check.sh      Java and JavaScript physics over identical inputs,
 tools/predict-check.mjs   A headless client that plays for nine seconds against
                           a real server and measures its own prediction error,
                           driving the browser's own predictor rather than a copy.
+
+tools/client-check.sh     Loads the actual page in a browser. Exists because a
+                          rename once left the draw loop calling a function that
+                          no longer existed: the client threw on its first frame
+                          and rendered a black screen, and every other check
+                          passed, since they all run the simulation in Node and
+                          none of them opens the page.
 ```
 
 Current numbers: **0.000000 units** of prediction error, with star collisions,
@@ -83,6 +90,23 @@ moving its tick counter directly, which skipped a tick number outright. Nothing
 was ever addressed to the skipped tick, so the server held the previous intent
 and corrected the client. It now closes the gap by running an extra tick and
 emitting an input for it. Late inputs fell from 8.9% of snapshots to 1.6%.
+
+**No lag compensation, and the measurement that decided it.** The usual answer
+to "the client aims at stale positions" is to rewind the world when resolving a
+hit. Building that made things worse, from 0.000000 units to 0.124. This client
+does not hold stale positions: it mirrors the whole world and carries every body
+forward with the same physics, so for anything without an input its present *is*
+the server's, and rewinding put the server behind the client. What a client
+genuinely cannot know is another player's intent, and the answer to that is a
+correction within one snapshot, not a rewind of everything. The reasoning is
+kept in `GameServer` where the shove is applied, because the next person to read
+it will have the same instinct I did.
+
+Drawing followed the same logic: other players are rendered from the predicted
+world rather than interpolated ~80ms in the past. In a contact game you aim at a
+body in order to hit it, and your prediction resolves that contact against the
+present, so drawing the past means aiming at one thing and colliding with
+another.
 
 **Iteration order, 0.23 units on contact.** Collisions resolve in one pass over
 the body list, so with three bodies touching at once the order decides the

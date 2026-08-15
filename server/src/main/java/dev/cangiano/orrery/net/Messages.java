@@ -32,7 +32,13 @@ public final class Messages {
             @JsonProperty("seq") long seq,
             @JsonProperty("tick") long tick,
             @JsonProperty("ax") double ax,
-            @JsonProperty("ay") double ay) {}
+            @JsonProperty("ay") double ay,
+            /**
+             * The server tick this client's world is built from. A shove is
+             * resolved against that moment rather than against the server's
+             * present, because that is what the player could actually see.
+             */
+            @JsonProperty("rt") long renderTick) {}
 
     /**
      * Server's answer to a join: who you are, how big the world is, and every
