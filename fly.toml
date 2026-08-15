@@ -1,0 +1,49 @@
+# Fly.io deployment.
+#
+#   brew install flyctl      # or: curl -L https://fly.io/install.sh | sh
+#   fly auth login
+#   fly launch --copy-config --no-deploy
+#   fly deploy
+#
+# Nothing here needs a secret: the game has no database, no API keys and no
+# accounts. The whole state of a match lives in one process's memory.
+
+app = "orrery"
+primary_region = "mia"          # Miami, nearest to Deltona
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ORRERY_PORT = "7070"
+
+[http_service]
+  internal_port = 7070
+  force_https = true
+
+  # NOT auto-stopped, and this is the whole point of paying for it.
+  #
+  # Fly's default suspends a machine that has been idle and wakes it on the next
+  # request. For most sites that is free money. For this it is fatal: the first
+  # visitor waits several seconds on a cold JVM, and anyone who was already
+  # playing has their WebSocket dropped underneath them the moment the room goes
+  # quiet enough to look idle.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # One machine, deliberately. The server is authoritative and holds the match
+  # in memory, so two machines would be two separate games that cannot see each
+  # other, and a load balancer would split a lobby in half.
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"              # 256 is enough to run but tight for JVM startup
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/"

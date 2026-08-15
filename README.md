@@ -185,6 +185,19 @@ Against a player who never moves, it wins 5-0 in about a minute.
 
     docker build -t orrery . && docker run -p 7070:7070 orrery
 
+On Fly.io, which is what `fly.toml` is for:
+
+    fly auth login
+    fly launch --copy-config --no-deploy
+    fly deploy
+
+Two settings in there are load-bearing. Machines are not auto-stopped, because
+Fly's default suspends an idle machine and wakes it on the next request: that
+costs the first visitor a cold JVM and drops the WebSocket of anyone still
+playing when the room goes quiet. And it runs as a single machine, because the
+server is authoritative and holds the match in memory, so a second one would be
+a second game that the first cannot see.
+
 One process serves both the game and the client, so there is nothing else to
 stand up. `ORRERY_PORT` moves the port, `ORRERY_BOTS=0` turns the bot off.
 
