@@ -186,3 +186,27 @@ which matters in a game about momentum.
 The floor material is brighter and slightly metallic now as well, because the
 panel seams and rivets in that texture were completely invisible at the previous
 exposure, and a texture nobody can see is a texture nobody needed.
+
+
+## The backdrop was thrown away (2026-08-15)
+
+It was pixelated, and no amount of filtering was going to fix it. A generated
+plate is at most a couple of thousand pixels on its longest side; stretched over
+an entire sky and viewed through a 40 degree lens, every star was several soft
+blocks across. A star is a point of light one pixel wide, which is the one thing
+a texture cannot be at any resolution worth shipping.
+
+The sky is now geometry: 2600 points on a sphere of radius 420, evenly
+distributed with `acos` rather than a uniform angle so the poles do not gather
+more than the equator, mostly cold white with a scattering of warm ones, and
+three enormous tilted rings of the derelict orrery drawn as lines. Sharp at any
+zoom, a fraction of the cost, and deterministic from a fixed seed, because a sky
+that reshuffles on every refresh reads as a bug.
+
+`backdrop-equirect.jpg` is deleted. `tools/art/generate.py` still knows how to
+make one if a painted sky is ever wanted for something else.
+
+One trap on the way: the scene fog fades everything past 280 units to the
+background colour, and the sky sits at 420, so the first version rendered the
+whole starfield and then faded every star to exactly the colour behind it. The
+sky materials opt out of fog.

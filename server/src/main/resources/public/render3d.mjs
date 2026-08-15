@@ -77,12 +77,6 @@ function loadTextures() {
     star: colour('star-equirect.jpg'),
     glow: colour('particle-glow.png'),
     shockwave: colour('particle-shockwave.png'),
-    backdrop: (() => {
-      const tex = loader.load(TEX + 'backdrop-equirect.jpg');
-      tex.mapping = THREE.EquirectangularReflectionMapping;
-      tex.colorSpace = THREE.SRGBColorSpace;
-      return tex;
-    })(),
   };
 }
 
@@ -99,12 +93,7 @@ export class Renderer3D {
     this.tex = loadTextures();
 
     this.scene = new THREE.Scene();
-    // The dead system this arena hangs inside. Dark enough that it never
-    // competes with the star, which is the only thing allowed to be bright.
-    this.scene.background = this.tex.backdrop;
-    // Turned down again once the floor stopped competing with it. The backdrop
-    // is scenery; if it is ever the brightest thing on screen it is wrong.
-    this.scene.backgroundIntensity = 0.3;
+    this.scene.background = new THREE.Color(0x05070d);
     this.scene.fog = new THREE.Fog(0x05070d, 110, 280);
 
     // Looking down the arena at an angle rather than straight down. Straight
@@ -119,6 +108,7 @@ export class Renderer3D {
     this.camera.lookAt(cfg.w / 2, cfg.h * 0.5, 0);
 
     this.buildArena();
+    this.buildSky();
 
     /*
      * The star is meant to be the only light, and taken literally that produced
@@ -167,6 +157,97 @@ export class Renderer3D {
     }));
     this.halo.scale.setScalar(26);
     this.scene.add(this.halo);
+  }
+
+  /**
+   * The dead system, built rather than painted.
+   *
+   * <p>It was an equirectangular photograph, and it looked it: a generated plate
+   * fitted to a 2:1 sphere map and stretched over the whole sky, so every star
+   * was several soft blocks across. A star is a point of light one pixel wide,
+   * which is the one thing a texture can never be at any resolution you can
+   * afford to ship.
+   *
+   * <p>So the stars are points and the derelict rings are lines. Both stay sharp
+   * at any zoom, cost almost nothing, and are deterministic: the same seed every
+   * load, because a sky that reshuffles on refresh reads as a bug.
+   */
+  buildSky() {
+    // Small deterministic generator. Math.random would give a different sky on
+    // every load and make any screenshot impossible to reproduce.
+    let seed = 20260815;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296;
+    };
+
+    const COUNT = 2600;
+    const R = 420;
+    const positions = new Float32Array(COUNT * 3);
+    const colours = new Float32Array(COUNT * 3);
+    const sizes = new Float32Array(COUNT);
+
+    for (let i = 0; i < COUNT; i++) {
+      // Even over the sphere: acos of a uniform, not a uniform angle, or the
+      // poles gather far more stars than the equator.
+      const theta = rand() * Math.PI * 2;
+      const phi = Math.acos(2 * rand() - 1);
+      positions[i * 3] = R * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = R * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = R * Math.cos(phi);
+
+      // Mostly cold white, a few warm, none of them bright enough to argue with
+      // the star.
+      const warm = rand() > 0.86;
+      const level = 0.35 + rand() * 0.55;
+      colours[i * 3] = level * (warm ? 1 : 0.82);
+      colours[i * 3 + 1] = level * (warm ? 0.86 : 0.88);
+      colours[i * 3 + 2] = level * (warm ? 0.7 : 1);
+      sizes[i] = rand() < 0.06 ? 2.6 : 1.3;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+    const stars = new THREE.Points(geo, new THREE.PointsMaterial({
+      size: 1.6,
+      sizeAttenuation: false,   // a star is a point, however far away it is
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      // The scene fog fades everything past 280 units into the background, and
+      // the sky lives at 420. Without this the entire starfield renders and is
+      // then faded to exactly the colour behind it, which looks identical to
+      // having drawn nothing at all.
+      fog: false,
+    }));
+    stars.position.set(this.cfg.w / 2, this.cfg.h / 2, 0);
+    this.scene.add(stars);
+
+    // The broken orrery this place fell out of: enormous rings, edge on, tilted
+    // away, faint enough to read as structure rather than as decoration.
+    const ringMat = new THREE.LineBasicMaterial({
+      color: 0x35507e, transparent: true, opacity: 0.8, depthWrite: false,
+      fog: false,
+    });
+    const rings = [
+      { radius: 230, tiltX: 1.15, tiltZ: 0.30 },
+      { radius: 310, tiltX: 1.32, tiltZ: -0.22 },
+      { radius: 385, tiltX: 1.02, tiltZ: 0.55 },
+    ];
+    for (const { radius, tiltX, tiltZ } of rings) {
+      const pts = [];
+      for (let i = 0; i <= 220; i++) {
+        const a = (i / 220) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a) * radius, Math.sin(a) * radius, 0));
+      }
+      const ring = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ringMat);
+      ring.rotation.set(tiltX, 0, tiltZ);
+      ring.position.set(this.cfg.w / 2, this.cfg.h / 2, 0);
+      this.scene.add(ring);
+    }
   }
 
   /**
