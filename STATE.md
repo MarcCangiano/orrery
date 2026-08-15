@@ -56,9 +56,9 @@ Two reasons, in order:
 ## Status
 
 - [x] Project skeleton
-- [ ] JDK installed and verified
-- [ ] Gradle build, JUnit, one passing test
-- [ ] Fixed-tick server loop with a measured, stable tick
+- [x] JDK installed and verified (Temurin 21.0.12, isolated under ~/jdks, never brew)
+- [x] Gradle build, JUnit, 8 passing tests
+- [x] Fixed-tick server loop with a measured, stable tick (59.65/sec vs 60 target, 0 dropped)
 - [ ] WebSocket transport and a binary-ish protocol
 - [ ] Client connects, sends input, renders server state
 - [ ] Physics solver: bodies, walls, collisions, restitution
@@ -70,7 +70,21 @@ Two reasons, in order:
 - [ ] Lag-compensated shove
 - [ ] Deploy: server on a box, client on Pages
 
+## Known issues
+
+- `Main` paces the loop with `Thread.sleep(1)`, and macOS sleep granularity puts
+  the worst observed gap at 25ms against a 16.67ms budget. Harmless while the
+  loop does nothing, wrong once it simulates. The fix is to sleep until just
+  before the deadline and spin the last fraction of a millisecond. Not now.
+
+## How to run it
+
+    export JAVA_HOME=~/jdks/jdk-21.0.12+8/Contents/Home
+    ./gradlew :server:test     # 8 tests
+    ./gradlew :server:run      # 3 seconds of loop, prints achieved rate
+
 ## Next action
 
-Verify the JDK, get Gradle in place, and land a fixed-tick loop that holds its
-rate under load with a test that proves it.
+Transport. A WebSocket endpoint, a client that connects, and one input message
+making a body move on the server and appear on screen. Nothing predicted yet:
+first prove the round trip, then make it feel good.
