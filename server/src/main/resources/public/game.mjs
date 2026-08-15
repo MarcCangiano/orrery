@@ -123,8 +123,14 @@ let fakeLagMs = 0;
 
 const keys = new Set();
 addEventListener('keydown', e => {
+  // The lobby gets first refusal on a key, so SPACE starts a game rather than
+  // firing a shove from a body that does not exist yet.
+  if (lobbyKey(e)) {
+    e.preventDefault();
+    return;
+  }
   const k = e.key.toLowerCase();
-  if (k === ' ') { shoveHeld = true; return; }
+  if (k === ' ') { shoveHeld = true; e.preventDefault(); return; }
   if (k === 'p') { predictionOn = !predictionOn; return; }
   if (k === 'g') { ghostOn = !ghostOn; return; }
   if (k === 'l') { fakeLagMs = fakeLagMs === 0 ? 100 : fakeLagMs === 100 ? 300 : 0; return; }
@@ -330,13 +336,31 @@ function autopilot() {
  * keeps running behind it so the connection is visibly alive before anyone
  * commits to a side.
  */
+let overlayKey = '';
+
 function renderOverlay() {
   const wantOverlay = myTeam < 0 || phase === 'countdown';
   overlay.classList.toggle('show', wantOverlay);
-  if (!wantOverlay) return;
+  if (!wantOverlay) {
+    overlayKey = '';
+    return;
+  }
+
+  /*
+   * Only rebuild when something actually changed.
+   *
+   * This used to rewrite panel.innerHTML on every frame, which destroyed and
+   * recreated the START button sixty times a second. A click needs the element
+   * it went down on to still exist when it comes up, so the button was
+   * unclickable, and nothing in the console said why.
+   */
+  const seconds = Math.max(1, Math.ceil(countdown / cfg.hz));
+  const key = [lobbyScreen, phase, myTeam, sideCounts[0], sideCounts[1],
+               phase === 'countdown' ? seconds : 0].join('|');
+  if (key === overlayKey) return;
+  overlayKey = key;
 
   if (phase === 'countdown' && myTeam >= 0) {
-    const seconds = Math.max(1, Math.ceil(countdown / cfg.hz));
     panel.innerHTML =
       `<div id="countdown">${seconds}</div>` +
       `<div class="tag">${TEAM_NAME[myTeam]}</div>`;
@@ -348,11 +372,10 @@ function renderOverlay() {
       `<h1>ORRERY</h1>` +
       `<div class="tag">feed the star to the serpent</div>` +
       `<button id="startbtn">START</button>` +
-      `<div class="hint">WASD thrust · SPACE shove · SHIFT tether</div>`;
-    document.getElementById('startbtn').onclick = () => {
-      lobbyScreen = 'sides';
-      renderOverlay();
-    };
+      `<div class="hint">click, or press ENTER or SPACE</div>`;
+    const btn = document.getElementById('startbtn');
+    btn.onclick = startPressed;
+    btn.focus();
     return;
   }
 
@@ -363,10 +386,48 @@ function renderOverlay() {
       `<button class="norse" data-team="0">NORSE</button>` +
       `<button class="greek" data-team="1">GREEK</button>` +
     `</div>` +
-    `<div class="count">${sideCounts[0]} norse · ${sideCounts[1]} greek</div>`;
+    `<div class="count">${sideCounts[0]} norse · ${sideCounts[1]} greek</div>` +
+    `<div class="hint">click a side, or press ENTER or SPACE to take the emptier one</div>`;
   for (const b of panel.querySelectorAll('[data-team]')) {
-    b.onclick = () => send({ t: 'pick', team: Number(b.dataset.team) });
+    b.onclick = () => pickSide(Number(b.dataset.team));
   }
+}
+
+/** START, by mouse or by key. */
+function startPressed() {
+  lobbyScreen = 'sides';
+  renderOverlay();
+}
+
+function pickSide(team) {
+  send({ t: 'pick', team });
+}
+
+/**
+ * Enter and Space work anywhere in the lobby.
+ *
+ * A game that opens with a single button should not require finding it with a
+ * mouse, and the two keys everyone tries first are the two that were doing
+ * nothing at all.
+ */
+function lobbyKey(e) {
+  if (myTeam >= 0) return false;                 // already in the match
+  const k = e.key;
+  const confirm = k === 'Enter' || k === ' ' || k === 'Spacebar';
+
+  if (lobbyScreen === 'start') {
+    if (confirm) { startPressed(); return true; }
+    return false;
+  }
+
+  if (k === 'ArrowLeft' || k === '1') { pickSide(0); return true; }
+  if (k === 'ArrowRight' || k === '2') { pickSide(1); return true; }
+  if (confirm) {
+    // The emptier side, so pressing one key twice does not stack a team.
+    pickSide(sideCounts[0] <= sideCounts[1] ? 0 : 1);
+    return true;
+  }
+  return false;
 }
 
 function readKeys() {
