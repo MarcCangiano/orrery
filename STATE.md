@@ -96,8 +96,9 @@ Two reasons, in order:
 - [x] Dockerfile: two stages, JRE and a jar, one process serves game and client
 - [x] Reconnect: the socket comes back on its own, tested by killing the server
       under a live client and watching it recover
-- [ ] Deploy to a real host (needs a box and Boss's call on spend)
-- [ ] Push to GitHub (Boss's call: publishing is his to authorize)
+- [ ] Deploy to a real host, so the link is playable rather than readable
+      (needs a box and Boss's call on spend; there is a Dockerfile ready)
+- [x] Public on GitHub: github.com/MarcCangiano/orrery, CI green
 
 ## How the clock works, because it is the non-obvious part
 
