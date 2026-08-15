@@ -149,6 +149,8 @@ server/src/main/resources/public/
   sim.mjs                 the same physics, in JavaScript
   predictor.mjs           prediction and reconciliation
   game.mjs                input, rendering, the clock estimate
+  audio.mjs               effects synthesised from the physics, plus the beds
+tools/audio/              generates the music; the effects have no assets
 tools/                    the checks that catch netcode bugs, plus shot.mjs,
                           which drives Chrome over the DevTools Protocol in
                           real time because --screenshot fires on load and
@@ -157,6 +159,15 @@ tools/                    the checks that catch netcode bugs, plus shot.mjs,
 
 `sim.mjs` is a line-for-line mirror of the Java, and the drift check fails the
 build if it ever stops being one.
+
+## Sound
+
+Effects are synthesised in the browser rather than sampled, so a hit can sound
+as hard as it was: `impact()` takes the change in velocity across a snapshot and
+turns it into a sound that is louder, brighter and lower for a harder collision,
+not the same sound at a higher volume. The whole effects layer is zero bytes of
+download. Music is five generated instrumental beds, a lobby drone plus two per
+pantheon, alternating with a crossfade. M mutes. Details in docs/AUDIO.md.
 
 ## Playing alone
 

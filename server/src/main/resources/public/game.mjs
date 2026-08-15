@@ -26,6 +26,24 @@
 //                   two most recent snapshots, or they stutter at 30Hz.
 
 import { Predictor } from './predictor.mjs';
+import { Sound } from './audio.mjs';
+
+/*
+ * Sound is driven from the predicted world, not from snapshots.
+ *
+ * A shove that is heard 40ms after the key is pressed does not feel like a
+ * delayed sound, it feels like an unresponsive control. So the cues a player
+ * causes — thrust, shove, tether — fire off the local input the moment it is
+ * addressed to a tick, on the same prediction everything else here rests on.
+ * Cues a player only observes — impacts, goals, the countdown — come off
+ * snapshots, because those are events the server decides.
+ */
+const sound = new Sound();
+// Reachable from the console, because the interesting failure here is silence,
+// and silence has no stack trace. Being able to ask the running page what its
+// context state is, and to fire a cue by hand, is the difference between
+// debugging this and guessing at it.
+window.sound = sound;
 
 /*
  * Two renderers, one simulation.
@@ -128,7 +146,25 @@ let predictionOn = true;
 let ghostOn = false;
 let fakeLagMs = 0;
 
+// Sound needs to know what changed, not what is true, so the previous value of
+// anything that makes a noise is kept here alongside it.
+let tetherWas = null;
+let scoreWas = [0, 0];
+let winnerWas = -1;
+let countdownWas = -1;
+
 const keys = new Set();
+
+/*
+ * Every browser refuses to make a sound until the page has been interacted
+ * with, and refuses silently: the context is created suspended and nothing ever
+ * plays. So the first key or click of the session, whatever it was for, is also
+ * what turns the audio on. In practice that is START, which is the right moment
+ * anyway.
+ */
+addEventListener('keydown', () => sound.unlock(), { once: false });
+addEventListener('pointerdown', () => sound.unlock());
+
 addEventListener('keydown', e => {
   // The lobby gets first refusal on a key, so SPACE starts a game rather than
   // firing a shove from a body that does not exist yet.
@@ -138,6 +174,7 @@ addEventListener('keydown', e => {
   }
   const k = e.key.toLowerCase();
   if (k === ' ') { shoveHeld = true; e.preventDefault(); return; }
+  if (k === 'm') { sound.toggleMute(); return; }
   if (k === 'p') { predictionOn = !predictionOn; return; }
   if (k === 'g') { ghostOn = !ghostOn; return; }
   if (k === 'c') { cameraFollows = renderer3d?.toggleFollow() ?? cameraFollows; return; }
@@ -196,6 +233,7 @@ function connect() {
     myId = null;
     predictor = null;
     haveClock = false;
+    silence();
     trails.clear();
     lastVel.clear();
     drawOffset.clear();
@@ -267,6 +305,7 @@ function handle(raw) {
   phase = m.phase;
   countdown = m.countdown;
   sideCounts = [m.norse, m.greek];
+  soundCues();
   const mine = m.bodies.find(b => b.id === myId);
   if (mine) myTeam = mine.team;
   for (const b of m.bodies) {
@@ -442,10 +481,13 @@ function renderBanner() {
 /** START, by mouse or by key. */
 function startPressed() {
   lobbyScreen = 'sides';
+  sound.unlock();
+  sound.uiSelect();
   renderOverlay();
 }
 
 function pickSide(team) {
+  sound.uiSelect();
   send({ t: 'pick', team });
 }
 
@@ -488,13 +530,27 @@ function readKeys() {
 }
 
 /**
+ * Cut the held sounds.
+ *
+ * Thrust and tether are continuous, so they hold their last value rather than
+ * decaying. Anything that stops localTick from running — a match ending, a
+ * disconnection, dropping back to the lobby — leaves them sounding forever,
+ * which is how the engine ends up running under a game that is not playing.
+ */
+function silence() {
+  sound.thrust(0);
+  sound.tether(false);
+  tetherWas = null;
+}
+
+/**
  * One local tick: address an input to the next tick, send it, and simulate it
  * immediately so the screen answers the key press now rather than in 40ms.
  */
 function localTick() {
-  if (myId === null || !haveClock || !predictor) return;
+  if (myId === null || !haveClock || !predictor) { silence(); return; }
   // No body, no inputs. A player in the lobby is a spectator.
-  if (myTeam < 0) return;
+  if (myTeam < 0) { silence(); return; }
   const tick = ++predTick;
   let { ax, ay } = readKeys();
   // One shove per press, not one per tick the bar is held down.
@@ -521,6 +577,31 @@ function localTick() {
   // Always advance, even with prediction switched off, so the predictor's tick
   // and history stay aligned with the server and P can be toggled at any moment.
   predictor.advance(tick);
+
+  sound.thrust(Math.hypot(ax, ay));
+  if (sh) sound.shove();
+
+  /*
+   * The tether cue follows the anchor the predictor actually holds, not the
+   * SHIFT key. Pressing SHIFT with nothing in reach attaches nothing, and a
+   * sound there would be telling the player they had grabbed something when
+   * they had not.
+   */
+  // Compared by id, not by object. Reconciling rebuilds the world, so the
+  // anchor is a different object every snapshot while being the same rock.
+  const anchor = predictor.anchor ?? null;
+  const anchorId = anchor ? anchor.id : null;
+  if (anchorId !== null && tetherWas === null) sound.tetherAttach();
+  else if (anchorId === null && tetherWas !== null) sound.tetherRelease();
+  if (anchor) {
+    // Rope tension, roughly: how far past its natural length it has been pulled.
+    const me = predictor.body;
+    const d = Math.hypot(anchor.x - me.x, anchor.y - me.y);
+    sound.tether(true, Math.max(0, Math.min(1, d / cfg.tetherMax)));
+  } else {
+    sound.tether(false);
+  }
+  tetherWas = anchorId;
 }
 
 /*
@@ -591,6 +672,46 @@ function recordTrails() {
 }
 
 /** A hit is a velocity that changed faster than a thruster could change it. */
+/**
+ * The cues the server decides: a goal, a win, the countdown, and which bed
+ * should be playing.
+ *
+ * All of them are edges. This runs on every snapshot, thirty times a second,
+ * and every one of these events would otherwise fire thirty times while the
+ * state that caused it is still true.
+ */
+function soundCues() {
+  // The lobby bed covers the countdown as well. Cutting to the match music the
+  // instant the teams lock, then having nothing happen for five seconds, made
+  // the countdown feel like the round had already started without you.
+  sound.play(phase === 'playing' ? 'match' : 'lobby');
+
+  if (score[0] !== scoreWas[0] || score[1] !== scoreWas[1]) {
+    // Which side gained one. In the lobby there is no side, so it is somebody
+    // else's goal and gets the other team's bell.
+    const scorer = score[0] !== scoreWas[0] ? 0 : 1;
+    sound.goal(myTeam >= 0 && scorer === myTeam);
+    scoreWas = score.slice();
+  }
+
+  if (winner !== winnerWas) {
+    if (winner >= 0) sound.win(myTeam >= 0 && winner === myTeam);
+    winnerWas = winner;
+    // A new match starts from nothing, and the reset must not read as a goal.
+    if (winner < 0) scoreWas = [0, 0];
+  }
+
+  if (phase === 'countdown') {
+    const seconds = Math.ceil(countdown / cfg.hz);
+    if (seconds !== countdownWas && seconds > 0) {
+      sound.countdown(seconds);
+      countdownWas = seconds;
+    }
+  } else {
+    countdownWas = -1;
+  }
+}
+
 function spotImpacts(bodies) {
   for (const b of bodies) {
     const was = lastVel.get(b.id);
@@ -614,6 +735,22 @@ function spotImpacts(bodies) {
         flashes.push({ id: b.id, x: b.x, y: b.y, born: now, strength });
         if (flashes.length > 24) flashes.shift();
         if (renderer3d) renderer3d.addFlash(b.x, b.y, strength);
+
+        /*
+         * Heard from where you are, not at full volume from anywhere.
+         *
+         * Without this the arena sounds the same wherever you are in it, and a
+         * scrap at the far jaws is as loud as one you are in. Falloff over
+         * roughly a third of the arena is enough to tell near from far without
+         * making distant events inaudible, which would lose information.
+         */
+        const me = predictor?.body;
+        const far = me ? Math.hypot(b.x - me.x, b.y - me.y) : 0;
+        const heard = strength / (1 + far / (cfg.w / 3));
+        if (heard > 0.02) {
+          if (b.id === STAR_ID) sound.starTouch(heard);
+          else sound.impact(heard);
+        }
       }
     }
   }
@@ -909,6 +1046,7 @@ function drawHud() {
     `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
         Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
     `WASD thrust   SPACE shove   SHIFT tether   C camera ${cameraFollows ? 'follow' : 'wide'}` +
+    `   M sound ${sound.muted ? '<span id="warn">off</span>' : 'on'}` +
     `   P prediction   L lag   G ghost` +
     (AUTOPILOT ? '   <b>autopilot</b>' : '') +
     (connected ? '' : '\n<span id="warn">disconnected, reconnecting</span>');

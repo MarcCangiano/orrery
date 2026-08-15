@@ -3,6 +3,12 @@ build/
 .gradle/
 *.class
 
+# The PCM the music was generated from: ninety megabytes, and the only thing it
+# buys is re-encoding at a different bitrate without paying to generate again.
+# Worth keeping on the machine that made it, not worth putting in a repository
+# that people are meant to be able to clone.
+tools/audio/raw/
+
 # Editors and OS
 .idea/
 *.iml

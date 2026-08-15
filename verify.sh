@@ -6,6 +6,7 @@
 #   3. predict check: a real client's prediction matches the real server
 #   4. spectator check: someone who has not joined can still see the arena
 #   5. client check: the browser page loads and comes alive
+#   6. audio check: every effect renders to a buffer with signal in it
 #
 # The third one starts a server on its own port and shuts it down after, so it
 # never fights with one you already have running.
@@ -48,6 +49,10 @@ node tools/spectator-check.mjs "ws://localhost:$port/ws"
 echo
 echo "--- client check (the actual page, in a browser)"
 ./tools/client-check.sh "http://localhost:$port/"
+
+echo
+echo "--- audio check (every effect rendered and measured)"
+node tools/audio-check.mjs "http://localhost:$port/"
 
 echo
 echo "all checks passed"

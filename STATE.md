@@ -86,7 +86,10 @@ Two reasons, in order:
 - [x] Artwork: 18 textures generated and wired in. See docs/ART-BRIEF.md for
       what was asked for and docs/ART-DELIVERY.md for what arrived and what
       changed afterwards
-- [ ] Sound
+- [x] Sound. Effects are synthesised in Web Audio with no assets and scale with
+      the physics that caused them; music is five generated instrumental beds,
+      one lobby drone and two per pantheon, alternating with a crossfade.
+      M mutes. See docs/AUDIO.md
 - [x] CI: GitHub Actions runs the tests, the drift check and the prediction
       check on every push. The browser check skips cleanly without Chrome
 - [x] Dockerfile: two stages, JRE and a jar, one process serves game and client
@@ -137,11 +140,16 @@ Two rules fell out of measuring, both in `predictor.mjs`:
 
     ./verify.sh
 
-Four gates: the tests, the Java-versus-JavaScript drift check, a headless client
+Six gates: the tests, the Java-versus-JavaScript drift check, a headless client
 that plays for nine seconds against a real server and measures its own
-prediction error, and a browser load of the actual page. The unit tests will
-never catch a netcode bug; the middle two exist for that. The last one exists
-because all three of the others passed while the real client was a black screen.
+prediction error, a spectator check, a browser load of the actual page, and an
+audio check that renders every effect to a buffer and measures the samples.
+
+The unit tests will never catch a netcode bug; the drift and prediction checks
+exist for that. The browser check exists because all of the others passed while
+the real client was a black screen. The audio check exists for the same reason
+one step further on: a check that asserted the sound methods exist would have
+passed on every version of the file that was silent.
 
 ## Next action
 
