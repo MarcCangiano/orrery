@@ -89,6 +89,24 @@ const SMOOTH_PER_TICK = 0.35;
 // one of those is a visible snap.
 const SAFETY_TICKS = 4;
 
+/*
+ * How many round trips the lead is sized from, and which of them counts.
+ *
+ * The lead used to be computed from the LATEST round trip, which is fine on
+ * localhost, where the latest round trip is the same as every other one. Over a
+ * real network it is not: on the first hosted deployment, late inputs went from
+ * 1.4% of snapshots to 10.5%, well past the 3% the check allows. The average
+ * latency had barely moved. What had changed was the spread, and a lead sized
+ * from a typical trip is by construction too short for the slow ones.
+ *
+ * So the lead is sized from a high percentile of recent trips instead. It costs
+ * a few milliseconds of responsiveness on a good connection and stops the snaps
+ * on a normal one, which is the right trade for a game people reach over the
+ * internet rather than over loopback.
+ */
+const RTT_WINDOW = 40;
+const RTT_PERCENTILE = 0.9;
+
 // Beyond this the estimate is not adjusted, it is replaced.
 const RESYNC_THRESHOLD = 10;
 
@@ -134,7 +152,17 @@ let freeze = 0;
 let winner = -1;
 
 let rttMs = 0;
+/** Recent round trips, newest last. The lead is sized from a high percentile. */
+const rttSamples = [];
 const sentAt = new Map();
+
+/** The slow end of recent round trips, which is what the lead has to survive. */
+function rttForLead() {
+  if (!rttSamples.length) return rttMs;
+  const sorted = [...rttSamples].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1,
+                         Math.floor(sorted.length * RTT_PERCENTILE))];
+}
 let correctionError = 0;
 let worstCorrection = 0;
 let replayedLast = 0;
@@ -332,12 +360,14 @@ function handle(raw) {
   const t0 = sentAt.get(m.ack);
   if (t0 !== undefined) {
     rttMs = performance.now() - t0;
+    rttSamples.push(rttMs);
+    if (rttSamples.length > RTT_WINDOW) rttSamples.shift();
     for (const k of sentAt.keys()) if (k <= m.ack) sentAt.delete(k);
   }
 
   // Where the clock should be: the server's tick, plus the ticks that will pass
   // while our next input is in flight, plus a margin for jitter.
-  const leadTicks = Math.max(1, Math.round((rttMs / 2) / cfg.dtMs)) + SAFETY_TICKS;
+  const leadTicks = Math.max(1, Math.round((rttForLead() / 2) / cfg.dtMs)) + SAFETY_TICKS;
   const target = m.tick + leadTicks;
 
   if (!haveClock || Math.abs(target - predTick) > RESYNC_THRESHOLD) {

@@ -1,21 +1,20 @@
 # Fly.io deployment.
 #
-#   brew install flyctl      # or: curl -L https://fly.io/install.sh | sh
-#   fly auth login
-#   fly launch --copy-config --no-deploy
 #   fly deploy
 #
 # Nothing here needs a secret: the game has no database, no API keys and no
 # accounts. The whole state of a match lives in one process's memory.
 
-app = "orrery"
-primary_region = "mia"          # Miami, nearest to Deltona
+app = 'orrery-arena'
+primary_region = 'iad'          # Ashburn. Miami is deprecated and Fly refuses
+                                # new machines there; Ashburn is the closest
+                                # live region to Deltona.
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  ORRERY_PORT = "7070"
+  ORRERY_PORT = '7070'
 
 [http_service]
   internal_port = 7070
@@ -28,22 +27,22 @@ primary_region = "mia"          # Miami, nearest to Deltona
   # visitor waits several seconds on a cold JVM, and anyone who was already
   # playing has their WebSocket dropped underneath them the moment the room goes
   # quiet enough to look idle.
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
 
   # One machine, deliberately. The server is authoritative and holds the match
   # in memory, so two machines would be two separate games that cannot see each
   # other, and a load balancer would split a lobby in half.
-  processes = ["app"]
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'GET'
+    path = '/'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"              # 256 is enough to run but tight for JVM startup
-
-[[http_service.checks]]
-  interval = "30s"
-  timeout = "5s"
-  grace_period = "20s"
-  method = "GET"
-  path = "/"
+  size = 'shared-cpu-1x'
+  memory = '512mb'              # 256 runs, but is tight for JVM startup

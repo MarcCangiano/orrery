@@ -34,6 +34,16 @@ let predTick = 0;
 let targetTick = 0;
 let haveClock = false;
 let rttMs = 0;
+// Mirrors the client: the lead is sized from the slow end of recent round trips,
+// not the latest one. See the note in game.mjs.
+const RTT_WINDOW = 40;
+const RTT_PERCENTILE = 0.9;
+const rttSamples = [];
+function rttForLead() {
+  if (!rttSamples.length) return rttMs;
+  const sorted = [...rttSamples].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * RTT_PERCENTILE))];
+}
 const sentAt = new Map();
 
 let snapshots = 0;
@@ -105,10 +115,12 @@ ws.addEventListener('message', ev => {
   const t0 = sentAt.get(m.ack);
   if (t0 !== undefined) {
     rttMs = Date.now() - t0;
+    rttSamples.push(rttMs);
+    if (rttSamples.length > RTT_WINDOW) rttSamples.shift();
     for (const k of sentAt.keys()) if (k <= m.ack) sentAt.delete(k);
   }
 
-  const leadTicks = Math.max(1, Math.round((rttMs / 2) / cfg.dtMs)) + SAFETY_TICKS;
+  const leadTicks = Math.max(1, Math.round((rttForLead() / 2) / cfg.dtMs)) + SAFETY_TICKS;
   const target = m.tick + leadTicks;
   if (!haveClock || Math.abs(target - predTick) > RESYNC_THRESHOLD) {
     predTick = target;
