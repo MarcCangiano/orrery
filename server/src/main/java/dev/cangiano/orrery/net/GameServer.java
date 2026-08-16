@@ -200,6 +200,24 @@ public final class GameServer {
                         node.path("th").asBoolean(false),
                         node.path("rt").asLong(0));
                 p.ring.set((int) Math.floorMod(forTick, INPUT_RING), c);
+                /*
+                 * Acknowledge on ARRIVAL, not on application.
+                 *
+                 * The client measures its round trip as the time from sending an
+                 * input to seeing that input acknowledged, and sizes its lead
+                 * from that measurement. Acknowledging when the input was
+                 * applied made the two circular: an input is addressed to a
+                 * future tick, so the wait for that tick was being counted as
+                 * network latency, which grew the lead, which pushed inputs
+                 * further into the future, which grew the measurement again.
+                 *
+                 * Hosted, that settled at a reported 125ms round trip to a
+                 * server 40ms away, and a lead of eight ticks where five would
+                 * do. Every one of those extra ticks is replayed on every
+                 * snapshot and delays when the server sees your shove relative
+                 * to everyone else's.
+                 */
+                p.ack = c.seq();
             });
 
             ws.onClose(ctx -> removePlayer(ctx));
@@ -446,7 +464,8 @@ public final class GameServer {
                         Command c = p.ring.get(slot);
                         if (c != null && c.tick() == tick) {
                             p.lastApplied = c;
-                            p.ack = c.seq();
+                            // NOT p.ack: that is set on arrival now, and writing
+                            // it here would move it backwards to an older seq.
                             p.ring.set(slot, null);
                         } else if (c == null && p.team >= 0) {
                             // Nothing addressed to this tick arrived in time.

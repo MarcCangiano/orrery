@@ -107,6 +107,23 @@ const SAFETY_TICKS = 4;
 const RTT_WINDOW = 40;
 const RTT_PERCENTILE = 0.9;
 
+/*
+ * The safety margin is not a constant, because the right value is a property of
+ * the connection rather than of the game.
+ *
+ * The server already tells us what we need: `missed` counts inputs that arrived
+ * after their tick had been simulated. That is the exact failure the margin
+ * exists to prevent, so the margin is driven by it. Every reported miss adds a
+ * tick of lead; a stretch with no misses gives one back.
+ *
+ * Fixed at four it was right on loopback and wrong over the internet, in both
+ * directions at different times: too small once the round trip was being
+ * measured honestly, and needlessly large on a good connection. Growing on
+ * evidence and decaying on quiet costs nothing when the network is fine.
+ */
+const SAFETY_MAX = 14;
+const DECAY_AFTER_CLEAN_SNAPSHOTS = 90;   // three seconds at 30Hz
+
 // Beyond this the estimate is not adjusted, it is replaced.
 const RESYNC_THRESHOLD = 10;
 
@@ -154,6 +171,10 @@ let winner = -1;
 let rttMs = 0;
 /** Recent round trips, newest last. The lead is sized from a high percentile. */
 const rttSamples = [];
+/** Grows when the server reports a late input, decays when it stops. */
+let safetyTicks = SAFETY_TICKS;
+let missedSeen = 0;
+let cleanSnapshots = 0;
 const sentAt = new Map();
 
 /** The slow end of recent round trips, which is what the lead has to survive. */
@@ -367,7 +388,16 @@ function handle(raw) {
 
   // Where the clock should be: the server's tick, plus the ticks that will pass
   // while our next input is in flight, plus a margin for jitter.
-  const leadTicks = Math.max(1, Math.round((rttForLead() / 2) / cfg.dtMs)) + SAFETY_TICKS;
+  if (m.missed > missedSeen) {
+    missedSeen = m.missed;
+    safetyTicks = Math.min(SAFETY_MAX, safetyTicks + 1);
+    cleanSnapshots = 0;
+  } else if (++cleanSnapshots >= DECAY_AFTER_CLEAN_SNAPSHOTS) {
+    safetyTicks = Math.max(SAFETY_TICKS, safetyTicks - 1);
+    cleanSnapshots = 0;
+  }
+
+  const leadTicks = Math.max(1, Math.round((rttForLead() / 2) / cfg.dtMs)) + safetyTicks;
   const target = m.tick + leadTicks;
 
   if (!haveClock || Math.abs(target - predTick) > RESYNC_THRESHOLD) {

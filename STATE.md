@@ -128,9 +128,16 @@ Two rules fell out of measuring, both in `predictor.mjs`:
   which is wrong the moment they thrust. It only reaches the screen through
   contact with you, and the correction arrives within a snapshot. Revisit if
   player-to-player collisions start feeling loose in real play.
-- Late inputs sit at ~1.6% of snapshots on localhost. Each one is a small snap.
-  Worth re-measuring over a real network before deciding whether SAFETY_TICKS
-  needs to be adaptive.
+- Late inputs: measured over a real network and fixed. Two causes. The server
+  acknowledged an input when it APPLIED it, but inputs are addressed to a future
+  tick, so the wait for that tick counted as latency, which grew the lead, which
+  pushed inputs further out, which grew the measurement again. Acking on arrival
+  reported an honest 79ms to a server 40ms away instead of 125ms. Second, the
+  safety margin is now driven by the server's own `missed` counter rather than
+  fixed at four: every reported late input adds a tick of lead and three quiet
+  seconds give one back. Hosted result: lead 6-8, correction 0.0000, and missed
+  inputs stopped at 7 and stayed there, where they had been climbing about nine
+  a second.
 
 ## How to run it
 

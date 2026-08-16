@@ -39,6 +39,12 @@ let rttMs = 0;
 const RTT_WINDOW = 40;
 const RTT_PERCENTILE = 0.9;
 const rttSamples = [];
+// Mirrors the client's adaptive margin. See game.mjs.
+const SAFETY_MAX = 14;
+const DECAY_AFTER_CLEAN_SNAPSHOTS = 90;
+let safetyTicks = SAFETY_TICKS;
+let missedSeen = 0;
+let cleanSnapshots = 0;
 function rttForLead() {
   if (!rttSamples.length) return rttMs;
   const sorted = [...rttSamples].sort((a, b) => a - b);
@@ -120,7 +126,16 @@ ws.addEventListener('message', ev => {
     for (const k of sentAt.keys()) if (k <= m.ack) sentAt.delete(k);
   }
 
-  const leadTicks = Math.max(1, Math.round((rttForLead() / 2) / cfg.dtMs)) + SAFETY_TICKS;
+  if (m.missed > missedSeen) {
+    missedSeen = m.missed;
+    safetyTicks = Math.min(SAFETY_MAX, safetyTicks + 1);
+    cleanSnapshots = 0;
+  } else if (++cleanSnapshots >= DECAY_AFTER_CLEAN_SNAPSHOTS) {
+    safetyTicks = Math.max(SAFETY_TICKS, safetyTicks - 1);
+    cleanSnapshots = 0;
+  }
+
+  const leadTicks = Math.max(1, Math.round((rttForLead() / 2) / cfg.dtMs)) + safetyTicks;
   const target = m.tick + leadTicks;
   if (!haveClock || Math.abs(target - predTick) > RESYNC_THRESHOLD) {
     predTick = target;
