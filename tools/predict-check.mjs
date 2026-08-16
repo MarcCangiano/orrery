@@ -40,8 +40,8 @@ const RTT_WINDOW = 40;
 const RTT_PERCENTILE = 0.9;
 const rttSamples = [];
 // Mirrors the client's adaptive margin. See game.mjs.
-const SAFETY_MAX = 14;
-const DECAY_AFTER_CLEAN_SNAPSHOTS = 90;
+const SAFETY_MAX = 8;
+const DECAY_AFTER_CLEAN_SNAPSHOTS = 30;
 let safetyTicks = SAFETY_TICKS;
 let missedSeen = 0;
 let cleanSnapshots = 0;

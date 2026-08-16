@@ -120,9 +120,18 @@ const RTT_PERCENTILE = 0.9;
  * directions at different times: too small once the round trip was being
  * measured honestly, and needlessly large on a good connection. Growing on
  * evidence and decaying on quiet costs nothing when the network is fine.
+ *
+ * THE CEILING AND THE DECAY RATE MATTER MORE THAN THE GROWTH. The first version
+ * allowed fourteen ticks and gave one back only after three seconds of quiet.
+ * Over a few minutes that ratcheted: replay depth climbed from seven ticks to
+ * seventeen and stayed there, and since a longer lead means more extrapolation,
+ * it made exactly the high-speed collisions worse that the margin was supposed
+ * to be protecting. A missed input costs one tick of held intent and is
+ * corrected on the next snapshot. A permanently inflated lead costs every tick
+ * of every replay. The cheap failure is the one to tolerate.
  */
-const SAFETY_MAX = 14;
-const DECAY_AFTER_CLEAN_SNAPSHOTS = 90;   // three seconds at 30Hz
+const SAFETY_MAX = 8;
+const DECAY_AFTER_CLEAN_SNAPSHOTS = 30;   // half a second at 60Hz
 
 // Beyond this the estimate is not adjusted, it is replaced.
 const RESYNC_THRESHOLD = 10;
