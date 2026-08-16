@@ -17,6 +17,14 @@
 
 import * as THREE from './vendor/three.module.js';
 
+/**
+ * How fast the camera closes on where it should be, per second.
+ *
+ * 16 settles in roughly 60ms, which trails the world enough to stay steady and
+ * not enough to feel like input lag.
+ */
+const CAMERA_RATE = 16;
+
 const TEAM_COLOR = [0x7fa8e3, 0xe0b062];
 
 /*
@@ -560,9 +568,26 @@ export class Renderer3D {
       }
     }
 
-    // Damped, frame-rate independent enough for this: the camera is allowed to
-    // lag the world, and it must never jump.
-    const k = 0.08;
+    /*
+     * Damped in real time, not per frame.
+     *
+     * This was a flat 0.08 applied once a frame, described in the previous
+     * comment as frame-rate independent enough. It is not independent at all:
+     * it converges twice as fast at 120fps as at 60, and on the machine this
+     * was measured on it left the camera trailing the player by about 130ms.
+     * With the ship itself predicted and exact, a view that drags behind it is
+     * precisely what gets reported as lag, and it was the only thing left after
+     * the round trip, the input timing, the world prediction and the frame rate
+     * all measured clean.
+     *
+     * An exponential on elapsed time settles in about 60ms and behaves the same
+     * at any frame rate. The camera is still allowed to trail the world, which
+     * is what stops it from jittering; it is no longer allowed to sightsee.
+     */
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - (this.camLastAt ?? now)) / 1000);
+    this.camLastAt = now;
+    const k = 1 - Math.exp(-CAMERA_RATE * dt);
     this.camFocus.x += (targetX - this.camFocus.x) * k;
     this.camFocus.y += (targetY - this.camFocus.y) * k;
     this.camHeight += (height - this.camHeight) * k;
