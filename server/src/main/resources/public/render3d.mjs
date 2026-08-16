@@ -559,10 +559,28 @@ export class Renderer3D {
          */
         height = h * 1.35;
 
-        // Never look outside the cage. Half the visible width at this height,
-        // roughly, is what has to stay inside.
-        const marginX = Math.min(w / 2, height * 0.30);
-        const marginY = Math.min(h / 2, height * 0.20);
+        /*
+         * Never look outside the cage, measured from the actual frustum.
+         *
+         * This was two fixed fractions of the camera height, 0.30 and 0.20,
+         * which are only correct at the window shape they were tuned on. The
+         * vertical field of view is fixed, so a wider window does not zoom out,
+         * it widens: at 1000x620 the visible half-width is about 0.6 arena
+         * heights, and at 1512x760 it is nearly twice that. The old margins
+         * stayed small, so on a laptop the camera was still allowed to sit next
+         * to a wall while showing an arena's worth of empty space beyond it,
+         * which is the "zoomed into the corner" report.
+         *
+         * Deriving the margins from the camera means the clamp is right at any
+         * window shape, and it degrades the way you would want: once the view
+         * is wider than the cage, min() pins the focus to the middle and the
+         * camera simply stops following on that axis instead of drifting to an
+         * edge. Height is untouched, so the scale still never breathes.
+         */
+        const halfV = height * Math.tan((this.camera.fov * Math.PI) / 360);
+        const halfH = halfV * this.camera.aspect;
+        const marginX = Math.min(w / 2, halfH);
+        const marginY = Math.min(h / 2, halfV);
         targetX = Math.min(Math.max(targetX, marginX), w - marginX);
         targetY = Math.min(Math.max(targetY, marginY), h - marginY);
       }
@@ -710,8 +728,25 @@ export class Renderer3D {
     this.ghostMesh.scale.setScalar(ghost.r * 1.06);
   }
 
+  /*
+   * The third argument matters, and it used to be false.
+   *
+   * setPixelRatio(2) on a Retina screen makes the drawing buffer twice the CSS
+   * size, which is the point. Passing updateStyle: false then tells three.js not
+   * to write style.width/height, and a canvas with no CSS size lays out at its
+   * buffer size in CSS pixels: 2000x880 inside a 1000x440 window. The stylesheet
+   * pins it with `position: fixed; inset: 0`, but inset alone does not stretch a
+   * replaced element that already has an intrinsic size, so the canvas simply
+   * overflowed and the window showed the top-left quarter of the frame. On a
+   * 1x display the buffer equals the CSS size, everything lines up, and the bug
+   * is invisible — which is exactly how it survived a round of screenshots taken
+   * headless at devicePixelRatio 1 (Boss, on a Retina laptop, 2026-08-16).
+   *
+   * Letting three.js set the style is what the 2D HUD canvas already does by
+   * hand: buffer 2000x880, style 1000x440.
+   */
   resize(width, height) {
-    this.renderer.setSize(width, height, false);
+    this.renderer.setSize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }

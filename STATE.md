@@ -161,6 +161,66 @@ the real client was a black screen. The audio check exists for the same reason
 one step further on: a check that asserted the sound methods exist would have
 passed on every version of the file that was silent.
 
+## Fixed and deployed 2026-08-16
+
+**The 3D canvas overflowed its window on Retina displays.** Reported as the game
+being "zoomed into the corner" on a laptop. `resize()` called
+`renderer.setSize(w, h, false)`, and that third argument tells three.js not to
+write the canvas's CSS size. With `setPixelRatio(2)` the buffer becomes twice the
+CSS size, and a canvas with no CSS size lays out at its buffer size in CSS
+pixels: 2000x880 inside a 1000x440 window, so the window showed the top-left
+quarter. `position: fixed; inset: 0` does not stretch a replaced element that
+already has an intrinsic size. On a 1x display buffer and CSS size are equal and
+nothing looks wrong, which is how it survived a round of headless screenshots
+taken at devicePixelRatio 1. The 2D HUD canvas had always set its own style; the
+3D one now lets three.js do it.
+
+**The follow camera's clamp ignored aspect ratio.** A separate bug found on the
+way, real but not the one reported. The margins that keep the camera inside the
+cage were fixed fractions of camera height, correct only at the window shape they
+were tuned on; they now come from the frustum, so the clamp holds at any shape
+and the camera stops following on an axis once the view is wider than the arena.
+
+## Known unfixed
+
+**Camera framing on wide windows (2026-08-16).** On a laptop the arena sat in a
+corner with an arena's worth of dead space beside it, while the same build framed
+correctly at 1000x620. The follow clamp in `render3d.mjs` measured "inside the
+cage" as fixed fractions of camera height (0.30 and 0.20), which are only true at
+the window shape they were tuned on. Vertical field of view is fixed, so a wider
+window does not zoom out, it widens: at 1512x760 the visible half-width is nearly
+double what the clamp assumed, so the camera was still allowed to sit against a
+wall. The margins now come from the camera frustum itself, which also means that
+once the view is wider than the cage the focus pins to the middle and the camera
+stops following on that axis. Camera height is untouched; the scale still does
+not breathe. Verified with screenshots at both window sizes and a full
+`./verify.sh`. **The fix is local only — fly.io still serves the old client.**
+
+
+**The bot scores far more slowly through the server than it does in the sim.**
+Boss reported that at the start of a match, against a player who does nothing,
+the opponent "always misses". Measured rather than guessed:
+
+- `BotIdleMatchTest` runs the real sim headless with an idle player, faithful
+  down to immovable fragments and the lane the server actually spawns the bot in.
+  It scores at 7.3s and then every 7-10 seconds, ten goals in two minutes.
+- The same code through the local server, joined from a browser and left alone,
+  scored once in eighty seconds. Twice.
+
+Same Bot class, same physics, wildly different outcome, so the fault is in the
+server loop around the bot rather than in its decisions. Not yet found.
+
+One theory tried and thrown away: that the shove cone was too loose. It fires
+when the x component of bot-to-star beats 0.3, about 72 degrees off axis, and a
+shove is radial, so the edge of that cone sends the star sideways. Replacing it
+with a proper two dimensional dot product against the goal direction made the bot
+WORSE, 4 goals against the original's 6, and was reverted. The obvious
+explanation is wrong; the test is what proved it.
+
+Fixed while in there: every bot shared one shove cooldown, so the first to fire
+put the rest on cooldown. Only one bot spawns today, so it is a trap rather than
+a symptom.
+
 ## Next action
 
 **Play it with two humans.** Everything above is verified by machines and none

@@ -87,7 +87,15 @@ public final class GameServer {
     private final int[] score = new int[2];
     private final List<Body> fragments = new ArrayList<>();
     private final List<Bot> bots = new ArrayList<>();
-    private long botShoveReady;
+    /**
+     * Shove cooldowns, one per bot id, not one for the whole side.
+     *
+     * This was a single field, so with more than one bot the first to fire put
+     * every other bot on cooldown, and a bot could be lined up on the star and
+     * silently refuse to shove because a teammate on the other side of the
+     * arena had just used the shared timer (2026-08-16).
+     */
+    private final java.util.Map<Integer, Long> botShoveReady = new java.util.HashMap<>();
 
     /**
      * Bots off with ORRERY_BOTS=0.
@@ -571,9 +579,9 @@ public final class GameServer {
                             continue;
                         }
                         bot.think(b, star);
-                        if (bot.shove && tick >= botShoveReady) {
+                        if (bot.shove && tick >= botShoveReady.getOrDefault(bot.id, 0L)) {
                             world.shove(b, Arena.SHOVE_RANGE, Arena.SHOVE_IMPULSE);
-                            botShoveReady = tick + Arena.SHOVE_COOLDOWN;
+                            botShoveReady.put(bot.id, tick + Arena.SHOVE_COOLDOWN);
                         }
                         double botThrust = THRUST * Bot.thrustScale();
                         b.applyForce(bot.ax * botThrust, bot.ay * botThrust, dt);
