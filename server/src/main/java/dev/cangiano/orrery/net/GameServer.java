@@ -131,6 +131,35 @@ public final class GameServer {
     private Thread simThread;
     private volatile boolean running;
 
+    /**
+     * When the simulation last completed a tick.
+     *
+     * <p>This exists because of an outage that lasted a day and a half without
+     * anyone noticing. The sim thread died, the page kept being served, Fly's
+     * health check kept passing because it asks for the index, and every client
+     * connected fine, got its welcome, and then sat in a lobby that never
+     * updated. Picking a side did work; the server said so in its own log. The
+     * client simply never saw a snapshot saying it had a body, so the lobby
+     * screen never went away and the game looked like it could not be started.
+     *
+     * <p>The whole product is this thread. If it is not ticking, the machine is
+     * not serving a game, whatever the web server says.
+     */
+    private volatile long lastTickNanos = System.nanoTime();
+
+    /** How long a gap in ticking counts as the simulation being down. */
+    private static final long STALE_NANOS = 2_000_000_000L;
+
+    /**
+     * How long a gap the watchdog will sit through before killing the process.
+     *
+     * <p>Deliberately longer than the health check's idea of stale. A garbage
+     * collection pause or a busy host can cost a second of ticks and the game
+     * survives it; ten seconds of nothing is not a stall, it is a stopped
+     * simulation, and no amount of waiting has ever fixed one.
+     */
+    private static final long WATCHDOG_NANOS = 10_000_000_000L;
+
     /** One intent from a client, addressed to a specific server tick. */
     private record Command(long seq, long tick, double ax, double ay,
             boolean shove, boolean tether, long renderTick) {}
@@ -248,6 +277,24 @@ public final class GameServer {
 
             ws.onClose(ctx -> removePlayer(ctx));
             ws.onError(ctx -> removePlayer(ctx));
+        });
+
+        /*
+         * The health check has to ask about the game, not about the web server.
+         *
+         * A check on / passes as long as Javalin can hand back index.html, and
+         * Javalin's threads are not the ones that run the match. Fly restarts a
+         * machine whose checks fail, so a check that watches the tick turns a
+         * dead simulation into a restart within a minute instead of into a
+         * report from someone trying to play.
+         */
+        app.get("/health", ctx -> {
+            long idleNanos = System.nanoTime() - lastTickNanos;
+            boolean alive = simulationHealthy();
+            ctx.status(alive ? 200 : 503);
+            ctx.contentType("text/plain");
+            ctx.result((alive ? "ok" : "SIMULATION STOPPED")
+                    + "  last tick " + (idleNanos / 1_000_000L) + "ms ago\n");
         });
 
         app.start(port);
@@ -441,9 +488,78 @@ public final class GameServer {
 
     private void startSimulation() {
         running = true;
+        lastTickNanos = System.nanoTime();
         simThread = new Thread(this::simulationLoop, "sim");
         simThread.setDaemon(true);
+        /*
+         * A daemon thread that throws prints its stack trace and vanishes, and
+         * the process it was the point of carries on. Say so loudly, and let the
+         * health check turn it into a restart.
+         */
+        simThread.setUncaughtExceptionHandler((t, e) -> {
+            System.err.println("the simulation thread died: " + e);
+            e.printStackTrace();
+        });
         simThread.start();
+        startWatchdog();
+    }
+
+    /**
+     * Kills the process if the simulation stops, so the platform restarts it.
+     *
+     * <p>Fly's restart policy on this machine is on-failure, so an exit is a
+     * fresh JVM within seconds. Left alone, a dead sim thread is a server that
+     * answers every request and runs no game, which is the worst of both: from
+     * the outside it looks up, and there is nothing to notice until somebody
+     * tries to play. Nothing here tries to repair the simulation, because a
+     * simulation that has thrown is a simulation whose world nobody can vouch
+     * for, and a match is four seconds of state, not something worth salvaging.
+     */
+    private void startWatchdog() {
+        Thread watchdog = new Thread(() -> {
+            while (running) {
+                try {
+                    Thread.sleep(1_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                long idle = System.nanoTime() - lastTickNanos;
+                if (running && idle > WATCHDOG_NANOS) {
+                    System.err.printf(
+                            "no tick for %dms: the simulation is gone. Exiting so the "
+                            + "machine restarts.%n", idle / 1_000_000L);
+                    System.err.flush();
+                    Runtime.getRuntime().halt(1);
+                }
+            }
+        }, "watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+    }
+
+    /** True while the simulation is running and has ticked recently. */
+    boolean simulationHealthy() {
+        Thread t = simThread;
+        return running
+                && t != null
+                && t.isAlive()
+                && System.nanoTime() - lastTickNanos <= STALE_NANOS;
+    }
+
+    /**
+     * Stops the simulation and leaves the web server up.
+     *
+     * <p>Only the health check test uses this, and it earns its place: a gate
+     * that has never been seen to fail is not known to work. It is the exact
+     * shape of the outage, a live HTTP server with a dead sim thread, which
+     * cannot otherwise be produced on demand.
+     */
+    void stopSimulationForTest() throws InterruptedException {
+        running = false;
+        if (simThread != null) {
+            simThread.join(2_000);
+        }
     }
 
     /**
@@ -633,6 +749,7 @@ public final class GameServer {
                 if (tick % TICK_HZ == 0) {
                     dropSilentPlayers();
                 }
+                lastTickNanos = System.nanoTime();
             });
 
             long now = System.nanoTime();

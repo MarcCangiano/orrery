@@ -9,6 +9,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,6 +74,40 @@ class GameServerIntegrationTest {
             ws.request(1);
             return CompletableFuture.completedFuture(null);
         }
+    }
+
+    /**
+     * The health check has to be able to go red, and this is the only test that
+     * proves it.
+     *
+     * <p>It exists because of a real outage: the sim thread died, / kept
+     * returning the page, the platform's check kept passing, and the game was
+     * unplayable for a day and a half with nothing anywhere saying so. A check
+     * that cannot fail is not a check, so this one is watched failing.
+     */
+    @Test
+    void healthGoesRedWhenTheSimulationStops() throws Exception {
+        int port = freePort();
+        server = new GameServer();
+        server.start(port);
+
+        HttpClient http = HttpClient.newHttpClient();
+        HttpRequest health = HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/health")).build();
+
+        // Give the loop a moment to take its first tick.
+        Thread.sleep(200);
+        HttpResponse<String> live = http.send(health, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, live.statusCode(), "a ticking server should be healthy");
+        assertTrue(live.body().startsWith("ok"), live.body());
+
+        // The exact shape of the outage: web server up, simulation gone.
+        server.stopSimulationForTest();
+        Thread.sleep(2_100);        // longer than STALE_NANOS
+
+        HttpResponse<String> dead = http.send(health, HttpResponse.BodyHandlers.ofString());
+        assertEquals(503, dead.statusCode(), "a stopped simulation should fail the check");
+        assertTrue(dead.body().contains("SIMULATION STOPPED"), dead.body());
     }
 
     @Test

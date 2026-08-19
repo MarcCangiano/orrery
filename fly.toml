@@ -41,7 +41,7 @@ primary_region = 'iad'          # Ashburn. Miami is deprecated and Fly refuses
     timeout = '5s'
     grace_period = '20s'
     method = 'GET'
-    path = '/'
+    path = '/health'
 
 [[vm]]
   size = 'shared-cpu-1x'
