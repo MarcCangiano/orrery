@@ -836,6 +836,12 @@ function soundCues() {
    * the countdown feel like the round had started without you.
    */
   const inTheMatch = myTeam >= 0 && phase === 'playing';
+  /*
+   * The countdown is five seconds of nothing happening, and the match track is
+   * a megabyte that was being fetched at the exact moment the match started.
+   * Ask for it now instead.
+   */
+  if (phase === 'countdown' && myTeam >= 0) sound.preloadMatch();
   sound.play(inTheMatch ? 'match' : 'lobby');
 
   if (score[0] !== scoreWas[0] || score[1] !== scoreWas[1]) {
@@ -1000,7 +1006,45 @@ function finishDrawOffsets() {
   }
 }
 
+/*
+ * Frame times, on the screen of whoever is having the problem.
+ *
+ * This machine runs the game at 240fps, so "extremely laggy at the beginning of
+ * a match" cannot be measured here: the frame that stalls a laptop for a third
+ * of a second costs 24ms on a desktop and looks like nothing. The HUD already
+ * carries the numbers that settle network arguments; these settle rendering
+ * ones, and they cost a subtraction per frame.
+ *
+ * Worst is kept from the start of the current match rather than as a rolling
+ * window, because the complaint is about the first seconds and a window that
+ * long forgets them before anyone can read it.
+ */
+let frameLast = performance.now();
+const frameTimes = [];
+let worstFrameMs = 0;
+let framePhaseWas = '';
+
+function noteFrame(now) {
+  const dt = now - frameLast;
+  frameLast = now;
+  frameTimes.push(dt);
+  if (frameTimes.length > 120) frameTimes.shift();
+  // A match beginning is the thing being measured, so the worst frame resets
+  // with the countdown and holds for the rest of the match.
+  if (phase === 'countdown' && framePhaseWas !== 'countdown') worstFrameMs = 0;
+  framePhaseWas = phase;
+  if (dt > worstFrameMs) worstFrameMs = dt;
+}
+
+/** Median rather than mean: one 300ms stall should not rewrite the frame rate. */
+function medianFrameMs() {
+  if (!frameTimes.length) return 0;
+  const sorted = frameTimes.slice().sort((a, b) => a - b);
+  return sorted[sorted.length >> 1];
+}
+
 function frame() {
+  noteFrame(performance.now());
   draw(performance.now());
   /*
  * A read-only handle for tests. tools and the input tests use it to ask the
@@ -1195,6 +1239,10 @@ function drawHud() {
     `prediction ${predictionOn ? '<b>on</b>' : '<span id="warn">off</span>'}` +
     `   replayed ${replayedLast}\n` +
     `correction ${correctionError.toFixed(4)}  worst ${worstCorrection.toFixed(4)}\n` +
+    `fps ${medianFrameMs() > 0 ? (1000 / medianFrameMs()).toFixed(0) : '...'}` +
+    `   frame ${medianFrameMs().toFixed(1)}ms` +
+    `   worst this match ${worstFrameMs > 100 ? '<span id="warn">' +
+        worstFrameMs.toFixed(0) + 'ms</span>' : worstFrameMs.toFixed(0) + 'ms'}\n` +
     `shove ${predTick >= shoveReady ? '<b>ready</b>' : 'in ' +
         Math.max(0, Math.ceil((shoveReady - predTick) / 60 * 10) / 10) + 's'}\n` +
     `WASD thrust   SPACE shove   SHIFT tether   C camera ${cameraFollows ? 'follow' : 'wide'}` +

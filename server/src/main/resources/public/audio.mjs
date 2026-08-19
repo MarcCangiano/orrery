@@ -205,6 +205,27 @@ export class Sound {
     this._startTrack(this.playlist[0], true);
   }
 
+  /**
+   * Buffer the first match track before the match needs it.
+   *
+   * <p>The lobby track is preloaded in the constructor for the same reason: a
+   * source assigned now downloads quietly, and one assigned at the transition
+   * downloads while the transition is trying to happen. Called on every
+   * countdown snapshot, so it has to be free after the first.
+   */
+  preloadMatch() {
+    if (this._matchPreloaded) return;
+    const first = this.tracks.norse?.[0] ?? this.tracks.greek?.[0];
+    if (!first) return;
+    this._matchPreloaded = true;
+    const el = this.players[1 - this.active];
+    const want = `music/${first}.mp3`;
+    if (!el.src.endsWith(want)) {
+      el.src = want;
+      el.load();
+    }
+  }
+
   stop() {
     this.mode = null;
     clearInterval(this.fadeTimer);

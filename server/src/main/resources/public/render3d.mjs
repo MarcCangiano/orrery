@@ -191,6 +191,8 @@ export class Renderer3D {
     }));
     this.halo.scale.setScalar(26);
     this.scene.add(this.halo);
+
+    this.warmUpPlayers();
   }
 
   /**
@@ -431,6 +433,77 @@ export class Renderer3D {
     }
   }
 
+  /**
+   * A player's surface. One material per body, because the body you are
+   * driving has its own emissive colour written onto it every frame.
+   */
+  playerMaterial(team) {
+    // Tinted toward the team colour on top of the material, so a Norse body
+    // and a Greek body are told apart by hue at a glance and by surface up
+    // close.
+    return new THREE.MeshStandardMaterial({
+      map: team === 0 ? this.tex.norse : this.tex.greek,
+      color: BODY_TINT[team] ?? 0xc8ccd4,
+      // A little self-illumination in the team colour, so a body away from
+      // the star is dim rather than absent. The star still decides what a
+      // surface looks like; this only stops it from disappearing.
+      emissive: TEAM_COLOR[team] ?? 0x666a72,
+      emissiveIntensity: 0.22,
+      roughness: 0.45, metalness: 0.25,
+    });
+  }
+
+  /** The collision circle drawn around a player, in their team's colour. */
+  playerRimMaterial(team) {
+    return new THREE.MeshBasicMaterial({
+      color: TEAM_COLOR[team],
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0.85,
+    });
+  }
+
+  /**
+   * Pay for the player surfaces during the lobby instead of on the first frame
+   * of the match.
+   *
+   * <p>Nothing wearing a player material is on screen until somebody takes a
+   * side: the lobby shows the star, the floor and the ring. So the first frame
+   * of every match was also the first time the driver had ever seen that
+   * shader, and the first time the two 1024px player textures were handed to
+   * the GPU. Compiling a program and uploading a texture both happen inside the
+   * frame that needs them, which is why the match opened with a stall and then
+   * ran clean. On this desktop it cost one 24ms frame and passed for a blip;
+   * reported from a laptop it was "extremely laggy at the beginning".
+   *
+   * <p>Two spheres, one per team, scaled to nothing and parked inside the star.
+   * They are drawn, so the shader is compiled, the depth variant the shadow map
+   * needs is compiled, and both textures are uploaded — all of it while the
+   * START button is still on screen. They stay in the scene for the session
+   * rather than being removed, because three.js frees a program as soon as the
+   * last material using it is disposed, and bodies are disposed every time
+   * somebody leaves.
+   */
+  warmUpPlayers() {
+    this.renderer.initTexture(this.tex.norse);
+    this.renderer.initTexture(this.tex.greek);
+
+    this.warmUp = [];
+    for (const team of [0, 1]) {
+      const mesh = new THREE.Mesh(this.sphere, this.playerMaterial(team));
+      const rim = new THREE.Mesh(this.sphere, this.playerRimMaterial(team));
+      rim.scale.setScalar(1.2);
+      mesh.add(rim);
+      mesh.castShadow = true;
+      // Sub-pixel, and inside the star where the only thing that could see it
+      // is already the brightest object in the arena.
+      mesh.scale.setScalar(0.0005);
+      mesh.position.set(this.cfg.w / 2, this.mapY(this.cfg.h / 2), 1);
+      this.scene.add(mesh);
+      this.warmUp.push(mesh);
+    }
+  }
+
   /** One mesh per body, created on first sight and reused after. */
   meshFor(b) {
     let mesh = this.bodies.get(b.id);
@@ -454,19 +527,7 @@ export class Renderer3D {
         emissive: 0x121a2b, emissiveIntensity: 1,
       });
     } else {
-      // Tinted toward the team colour on top of the material, so a Norse body
-      // and a Greek body are told apart by hue at a glance and by surface up
-      // close.
-      material = new THREE.MeshStandardMaterial({
-        map: b.team === 0 ? this.tex.norse : this.tex.greek,
-        color: BODY_TINT[b.team] ?? 0xc8ccd4,
-        // A little self-illumination in the team colour, so a body away from
-        // the star is dim rather than absent. The star still decides what a
-        // surface looks like; this only stops it from disappearing.
-        emissive: TEAM_COLOR[b.team] ?? 0x666a72,
-        emissiveIntensity: 0.22,
-        roughness: 0.45, metalness: 0.25,
-      });
+      material = this.playerMaterial(b.team);
     }
 
     mesh = new THREE.Mesh(this.sphere, material);
@@ -485,12 +546,7 @@ export class Renderer3D {
      * idea before there were figures to stand in it.
      */
     if (b.id >= 0 && (b.team === 0 || b.team === 1)) {
-      const rim = new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({
-        color: TEAM_COLOR[b.team],
-        side: THREE.BackSide,
-        transparent: true,
-        opacity: 0.85,
-      }));
+      const rim = new THREE.Mesh(this.sphere, this.playerRimMaterial(b.team));
       rim.scale.setScalar(1.2);
       mesh.add(rim);
       mesh.userData.team = b.team;
@@ -557,7 +613,7 @@ export class Renderer3D {
          * never settled. A game like this needs a stable scale far more than it
          * needs a clever one. The camera follows; it does not breathe.
          */
-        height = h * 1.35;
+        height = h * 1.45;
 
         /*
          * Never look outside the cage, measured from the actual frustum.
